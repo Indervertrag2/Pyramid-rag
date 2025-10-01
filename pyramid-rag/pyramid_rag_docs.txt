@@ -1,0 +1,18 @@
+Pyramid RAG Platform - Technische Dokumentation
+
+Die Pyramid RAG Platform ist eine vollständig on-premise Lösung für:
+- Retrieval-Augmented Generation (RAG)
+- Semantische Dokumentensuche
+- Wissensmanagement für Unternehmen
+
+Technische Details:
+- Backend: FastAPI mit Python
+- Frontend: React TypeScript
+- Database: PostgreSQL mit pgvector
+- LLM: Ollama (qwen2.5:7b)
+- GPU-Acceleration: RTX 2070
+- Document Processing: PDF, Word, Excel, PowerPoint, CAD
+- OCR: Tesseract für Deutsche und Englische Texte
+
+Pyramid Computer GmbH entwickelt diese Plattform für den internen Gebrauch.
+Alle Daten bleiben vollständig on-premise ohne externe API-Calls.

@@ -1,0 +1,68 @@
+Pyramid Computer GmbH - Unternehmenshandbuch
+
+1. ÜBER PYRAMID COMPUTER
+Pyramid Computer GmbH ist ein führender Hersteller von IT-Lösungen und Computersystemen mit Sitz in Deutschland. Seit über 35 Jahren entwickeln wir innovative Technologielösungen für Unternehmen weltweit.
+
+2. UNSERE PRODUKTE
+- Server-Systeme: Hochleistungsserver für Rechenzentren
+- Workstations: Professionelle Arbeitsplatzrechner
+- Embedded Systems: Maßgeschneiderte eingebettete Lösungen
+- Cloud-Infrastruktur: Private und Hybrid Cloud Lösungen
+
+3. ABTEILUNGEN
+- Management: Strategische Führung und Unternehmensleitung
+- Development: Software- und Hardwareentwicklung
+- Support: Technischer Kundensupport und Service
+- Marketing: Vertrieb und Marketingkommunikation
+- Operations: Produktion und Logistik
+
+4. UNSERE WERTE
+- Innovation: Wir streben nach technologischer Exzellenz
+- Qualität: Deutsche Ingenieurskunst in jedem Produkt
+- Nachhaltigkeit: Umweltbewusste Produktion und Recycling
+- Kundenorientierung: Individuelle Lösungen für jeden Bedarf
+
+5. TECHNOLOGIEN
+Wir setzen auf modernste Technologien:
+- Künstliche Intelligenz (KI) und Machine Learning
+- Edge Computing und IoT-Lösungen
+- Hochleistungsrechnen (HPC)
+- Green IT und Energieeffizienz
+
+6. STANDORTE
+Hauptsitz: Freiburg, Deutschland
+Niederlassungen: München, Hamburg, Berlin
+International: Schweiz, Österreich, Niederlande
+
+7. ZERTIFIZIERUNGEN
+- ISO 9001:2015 (Qualitätsmanagement)
+- ISO 14001:2015 (Umweltmanagement)
+- ISO 27001:2022 (Informationssicherheit)
+
+8. KONTAKT
+Pyramid Computer GmbH
+Bötzinger Straße 60
+79111 Freiburg
+Deutschland
+Tel: +49 761 4514-0
+E-Mail: info@pyramid.de
+Web: www.pyramid.de
+
+9. GESCHICHTE
+1985: Gründung der Pyramid Computer GmbH
+1990: Erste Server-Produktlinie
+1995: Expansion in internationale Märkte
+2000: Entwicklung eigener Embedded Systems
+2005: Einstieg in Cloud Computing
+2010: Green IT Initiative gestartet
+2015: KI-Forschungszentrum eröffnet
+2020: Hybrid-Cloud-Lösungen eingeführt
+2024: RAG-Platform für Unternehmenswissen
+
+10. MITARBEITERHANDBUCH
+Alle Mitarbeiter haben Zugang zu:
+- Flexiblen Arbeitszeiten
+- Home-Office-Möglichkeiten
+- Weiterbildungsprogrammen
+- Betrieblicher Altersvorsorge
+- Gesundheitsförderung

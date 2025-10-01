@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Direct Login Test</title>
+</head>
+<body>
+    <h1>Direct Login Test</h1>
+    <div id="status">Ready to test...</div>
+    <button onclick="testLogin()">Test Login via Frontend Proxy</button>
+    <button onclick="testBackend()">Test Direct Backend</button>
+    <pre id="result"></pre>
+
+    <script>
+        async function testLogin() {
+            const status = document.getElementById('status');
+            const result = document.getElementById('result');
+
+            status.textContent = 'Testing frontend proxy...';
+
+            try {
+                const response = await fetch('/api/v1/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: 'admin@pyramid-computer.de',
+                        password: 'PyramidAdmin2024!'
+                    })
+                });
+
+                const data = await response.json();
+                status.textContent = response.ok ? 'Login successful!' : 'Login failed!';
+                result.textContent = JSON.stringify(data, null, 2);
+
+                if (response.ok) {
+                    localStorage.setItem('access_token', data.access_token);
+                    alert('Login successful! Token saved.');
+                }
+            } catch (error) {
+                status.textContent = 'Error: ' + error.message;
+                result.textContent = error.stack;
+            }
+        }
+
+        async function testBackend() {
+            const status = document.getElementById('status');
+            const result = document.getElementById('result');
+
+            status.textContent = 'Testing direct backend...';
+
+            try {
+                const response = await fetch('http://localhost:18000/api/v1/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: 'admin@pyramid-computer.de',
+                        password: 'PyramidAdmin2024!'
+                    })
+                });
+
+                const data = await response.json();
+                status.textContent = response.ok ? 'Direct backend login successful!' : 'Direct backend login failed!';
+                result.textContent = JSON.stringify(data, null, 2);
+
+                if (response.ok) {
+                    localStorage.setItem('access_token', data.access_token);
+                    alert('Backend login successful! Token saved.');
+                }
+            } catch (error) {
+                status.textContent = 'Error: ' + error.message;
+                result.textContent = error.stack;
+            }
+        }
+    </script>
+</body>
+</html>

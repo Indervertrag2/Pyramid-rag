@@ -1,0 +1,150 @@
+Anforderungssheet – Pyramid RAG Platform (On-Prem, REST + MCP)
+0) Überblick & Ziel
+
+Bau einer vollständig on-premise betriebenen RAG-Plattform mit Chat-Assistent. Mitarbeitende laden Dokumente hoch, verwalten sie und befragen sie im Chat (Suche ist nur im Chat).
+MCP (Model Context Protocol) wird als Tool/Resource-Schicht für den Chat eingesetzt; die REST-API bleibt für UI, Admin, Upload usw. zuständig. 
+OpenAI Plattform
++2
+OpenAI Kochbuch
++2
+
+1) Benutzer & Rollen
+
+Superuser (Vollzugriff), Abteilungsleiter, Mitarbeiter.
+
+Nutzerkonten werden vom Admin erstellt (kein Self-Sign-Up).
+
+RBAC mit Scopes: personal, department, company, admin.
+
+2) Funktionsumfang (Soll)
+2.1 Chat (einzige Suchoberfläche)
+
+Chat-Sessions mit persistenter History (normale Chats dauerhaft).
+
+Toggle „RAG an/aus“ pro Nachricht:
+
+RAG an: Retrieval gegen Wissensdatenbank (mit Zitaten/Metadaten).
+
+RAG aus: reines LLM ohne Retrieval.
+
+Websuche-Toggle (Internetrecherche) ist Roadmap und per Feature-Flag deaktiviert (WEB_SEARCH_ENABLED=false).
+
+2.2 Dokumente & Upload
+
+Upload mit Metadaten (Tags, Beschreibung, Status). Abteilung im UI optional, RBAC filtert Zugriffe automatisch.
+
+Dateigrenzen: max. 1 GB pro Datei; „alle gängigen Formate“ (PDF/Office/CAD/… – Best-Effort-Parser).
+
+Indexierung: nur Text + Metadaten (keine Binär-Diffs/Previews).
+
+OCR: Deutsch & Englisch. 
+Tesseract OCR
++2
+OCRmyPDF
++2
+
+2.3 Temporäre Chats (Private Scratch-Space)
+
+Dateien & Embeddings werden nur im Temp-Scope gespeichert.
+
+Automatische Löschung nach 30 Tagen (Hard-Delete Files + Chunks + Embeddings).
+
+Kein Zugriff durch andere – auch nicht Admins.
+
+Temp-Daten fließen nie in die globale Suche ein.
+
+2.4 Duplikate / Überschreiben / Löschen
+
+Dedup: SHA-256 pro Datei – identischer Inhalt ⇒ Upload verwerfen (optional „verknüpfen“ konfigurierbar).
+
+Überschreiben (gleicher Name, anderer Inhalt): genau 1 Backup der vorherigen Version (*.bak/*-prev.*). Beim nächsten Overwrite wird das Backup ersetzt (niemals >1 Backup).
+
+Alle Operationen werden auditiert (Upload/Overwrite/Delete/Reindex).
+
+2.5 Administration & Monitoring
+
+Admin-Konsole: Nutzer/Rollen, Audits, Dokument-Reindex, Service-Status.
+
+Health-Status für API, Worker, LLM, DB.
+
+Prometheus-Metriken & Grafana-Dashboards (System, Pipeline, LLM, Search).
+
+3) Nicht-Funktionale Anforderungen
+
+On-Prem via Docker Compose, GPU für LLM verpflichtend.
+
+Ziel: ~10 gleichzeitige Nutzer.
+
+Latenzen Richtwerte: API < 200 ms p95, Suche < 500 ms p95, Chat (RAG) < 3 s p95.
+
+Keine Encryption at Rest gefordert (kann später ergänzt werden).
+
+
+
+4) Technische Architektur
+4.1 Komponenten
+
+Frontend (React + TypeScript): Routen: Login, Chat (Upload integriert), Admin, Health. Modell-Dropdown zeigt alle lokal installierten Ollama-Modelle (aus ollama list). 
+GitHub
+
+Backend (FastAPI): REST-API + Chat-Orchestrator; JWT-Auth; Rate-Limiting, CORS, Health, /metrics.
+
+LLM / Embeddings: Ollama (z. B. Qwen 2.5 14B) + lokales Embedding-Modell.
+
+Speicher: Storage-Adapter mit Default NAS (einfacher Betrieb). Optional später MinIO als Objektspeicher – ohne App-Code-Änderungen umschaltbar.
+
+Vektorstore: PostgreSQL + pgvector (HNSW/IVFFlat Indizes). 
+GitHub
++2
+Supabase
++2
+
+Async-Pipeline: Celery + Redis (Extraktion/OCR, Chunking, Embeddings, Reindex, Cleanup).
+
+Reverse Proxy: nginx (TLS).
+
+Monitoring: Prometheus + Grafana.
+
+4.2 MCP-Schicht (für den Chat)
+
+Warum: Standardisierte Tools/Resources/Prompts; Host ruft Server per STDIO (lokal) oder HTTP/SSE (remote) auf. 
+OpenAI Plattform
++1
+
+Server (Beispiele):
+
+mcp-search (Tools: hybrid_search, vector_search, keyword_search)
+
+mcp-docs (Resources: rag://doc/{id}; Tools: get_snippet, reindex [admin-gated])
+
+mcp-authz (Tool: check_access)
+
+mcp-audit (Tool: audit_event)
+
+Chat-Flow: Bei rag_enabled=true → check_access → hybrid_search → rag://doc/{id} Fragmente → Antwort mit Zitaten. (MCP-Prompting-Hinweise und Call-Begrenzungen beachten.) 
+OpenAI Kochbuch
+
+5) Sicherheit & Policies
+
+JWT-Policy (Testbetrieb): Access & Refresh = 180 Tage (per ENV fest).
+
+RBAC in Backend & UI (Scopes personal/department/company/admin).
+
+Auditing aller sensiblen Aktionen (Upload/Delete/Overwrite/Reindex/Admin-Änderungen).
+
+MCP-Calls mit kurzlebigem Service-JWT (enthält session_id, dept, roles); schreibende Tools nur mit Bestätigung (Host-Elicitation). 
+OpenAI Plattform
+
+6) Datenmodell (Kerne)
+
+users(id, email, password_hash, dept, roles[], created_at)
+
+documents(id, scope, owner_id, dept, filename, mime, size, status, tags[], content_hash, created_at)
+
+chunks(id, document_id, ord, text, embedding vector, span_start, span_end)
+
+audits(id, ts, user_id, action, target_type, target_id, meta jsonb)
+
+temp_sessions(id, owner_id, expires_at); temp_files(session_id, …)
+
+7) API-Skizze (REST)

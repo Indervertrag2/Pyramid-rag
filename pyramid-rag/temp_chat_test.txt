@@ -1,0 +1,2 @@
+Temporärer Chat Test-Datei
+Kann NICHT in Firmendatenbank gespeichert werden.

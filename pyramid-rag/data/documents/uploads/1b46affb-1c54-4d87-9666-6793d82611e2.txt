@@ -1,0 +1,50 @@
+Pyramid RAG Platform - Benutzerhandbuch
+
+Einführung:
+Die Pyramid RAG Platform ist eine fortschrittliche KI-basierte Dokumentenmanagement-Lösung, die speziell für Unternehmen entwickelt wurde. Sie kombiniert Retrieval-Augmented Generation (RAG) mit modernster Suchmaschinentechnologie.
+
+Hauptfunktionen:
+1. Dokumentenupload und -verarbeitung
+   - Automatische Texterkennung (OCR)
+   - SHA-256 Deduplizierung
+   - Metadaten-Extraktion
+   - Vektormbasierte Suche
+
+2. KI-gestützte Chatfunktion
+   - Kontextbewusste Antworten basierend auf Unternehmensdokumenten
+   - RAG Ein/Aus Toggle für präzise Kontrolle
+   - Quellenangaben für Nachverfolgbarkeit
+
+3. Sicherheit und Datenschutz
+   - On-Premise Deployment
+   - Rollenbasierte Zugriffskontrolle (RBAC)
+   - Verschlüsselung aller Daten
+
+Technische Spezifikationen:
+- Backend: FastAPI mit PostgreSQL + pgvector
+- Frontend: React TypeScript mit Material-UI
+- LLM: Qwen2.5:7b (lokal ausgeführt)
+- Embedding: Sentence-Transformers (mehrsprachig)
+- Container: Docker Compose Setup
+
+Systemanforderungen:
+- Minimum 16GB RAM
+- GPU empfohlen für LLM-Performance
+- Docker und Docker Compose installiert
+- Port 3002 (Frontend) und 18000 (API) verfügbar
+
+Installation:
+1. Repository klonen
+2. Docker Compose starten: docker-compose up -d
+3. Admin-User erstellen: admin@pyramid-computer.de / admin123
+4. Frontend unter http://localhost:3002 aufrufen
+
+Nutzung:
+1. Mit Admin-Zugangsdaten einloggen
+2. Dokumente über die Upload-Schnittstelle hochladen
+3. Chat-Interface nutzen für intelligente Abfragen
+4. RAG Toggle aktivieren für dokumentenbasierte Antworten
+
+Support:
+Bei Fragen oder Problemen wenden Sie sich an das IT-Team von Pyramid Computer GmbH.
+Weitere Informationen finden Sie in der technischen Dokumentation.

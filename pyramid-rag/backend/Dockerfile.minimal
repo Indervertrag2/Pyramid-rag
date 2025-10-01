@@ -1,0 +1,33 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install only essential system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
+COPY requirements-minimal.txt .
+RUN pip install --no-cache-dir -r requirements-minimal.txt
+
+# Copy application code
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p /app/data/uploads /app/data/processed /app/data/temp
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Create non-root user
+RUN useradd -m -u 1000 pyramid && chown -R pyramid:pyramid /app
+USER pyramid
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main_minimal:app", "--host", "0.0.0.0", "--port", "8000"]

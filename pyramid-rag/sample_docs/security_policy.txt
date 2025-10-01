@@ -1,0 +1,292 @@
+PYRAMID COMPUTER GMBH - IT SECURITY POLICY
+
+Version 2.0 - Gültig ab: Januar 2024
+Klassifizierung: Intern
+
+========================================
+1. EINLEITUNG UND GELTUNGSBEREICH
+========================================
+
+Diese Security Policy gilt für alle Mitarbeiter, Auftragnehmer, Berater und Partner der Pyramid Computer GmbH, die Zugriff auf unsere IT-Systeme, Daten oder Einrichtungen haben.
+
+Ziel dieser Policy ist:
+- Schutz von Unternehmensdaten und -systemen
+- Einhaltung gesetzlicher und regulatorischer Anforderungen
+- Minimierung von Sicherheitsrisiken
+- Gewährleistung der Geschäftskontinuität
+
+========================================
+2. INFORMATIONSKLASSIFIZIERUNG
+========================================
+
+ÖFFENTLICH:
+- Marketingmaterialien
+- Produktdatenblätter
+- Pressemitteilungen
+
+INTERN:
+- Interne Mitteilungen
+- Projektdokumentation
+- Schulungsunterlagen
+
+VERTRAULICH:
+- Kundendaten
+- Finanzdaten
+- Personaldaten
+- Geschäftsstrategien
+
+STRENG VERTRAULICH:
+- Passwörter und Zugangsdaten
+- Sicherheitsschlüssel
+- Quellcode kritischer Systeme
+- M&A Informationen
+
+========================================
+3. ZUGRIFFSKONTROLLE
+========================================
+
+AUTHENTIFIZIERUNG:
+- Eindeutige Benutzer-IDs für jeden Mitarbeiter
+- Komplexe Passwörter (min. 12 Zeichen, Groß/Klein, Zahlen, Sonderzeichen)
+- Passwortänderung alle 90 Tage
+- Multi-Faktor-Authentifizierung für kritische Systeme
+- Keine Weitergabe von Zugangsdaten
+
+AUTORISIERUNG:
+- Zugriff nach "Need-to-Know" Prinzip
+- Regelmäßige Überprüfung der Zugriffsrechte (quartalsweise)
+- Sofortige Deaktivierung bei Ausscheiden
+- Separate Admin-Accounts für privilegierte Tätigkeiten
+
+PHYSISCHE SICHERHEIT:
+- Zutrittskontrollsystem mit Badges
+- Besucherregistrierung und -begleitung
+- Serverräume nur für autorisiertes Personal
+- Clean Desk Policy
+- Bildschirmsperre bei Abwesenheit
+
+========================================
+4. NETZWERKSICHERHEIT
+========================================
+
+FIREWALL & SEGMENTIERUNG:
+- DMZ für öffentliche Dienste
+- Segmentierung nach Abteilungen (VLANs)
+- IDS/IPS Systeme aktiv
+- Regelmäßige Firewall-Regel-Reviews
+
+REMOTE ZUGRIFF:
+- Nur über VPN (OpenVPN oder IPSec)
+- Zertifikatsbasierte Authentifizierung
+- Automatische Trennung nach 8 Stunden
+- Logging aller Remote-Verbindungen
+
+WLAN SICHERHEIT:
+- WPA3 Enterprise Verschlüsselung
+- Separates Gäste-WLAN
+- MAC-Adress-Filterung für Firmennetzwerk
+- Regelmäßiger Wechsel der WLAN-Passwörter
+
+========================================
+5. ENDPOINT SECURITY
+========================================
+
+ARBEITSPLATZRECHNER:
+- Zentral verwaltetes Antivirus (Kaspersky/Sophos)
+- Automatische OS und Software Updates
+- Festplattenverschlüsselung (BitLocker/LUKS)
+- USB-Port Kontrolle
+- Application Whitelisting für kritische Systeme
+
+MOBILE GERÄTE:
+- Mobile Device Management (MDM)
+- Verschlüsselung erzwungen
+- Remote Wipe Funktion
+- Nur genehmigte Apps
+- Kein Jailbreak/Rooting
+
+========================================
+6. DATENSICHERHEIT
+========================================
+
+VERSCHLÜSSELUNG:
+- Daten in Ruhe: AES-256
+- Daten in Bewegung: TLS 1.3
+- E-Mail Verschlüsselung (S/MIME oder PGP)
+- Verschlüsselte Backups
+
+DATENLÖSCHUNG:
+- Sichere Löschung nach NIST 800-88
+- Zertifizierte Vernichtung von Datenträgern
+- Dokumentation der Löschvorgänge
+- Shreddern von Papierdokumenten (DIN 66399)
+
+BACKUP & RECOVERY:
+- Tägliche automatische Backups
+- Geografisch getrennte Backup-Standorte
+- Verschlüsselte Backup-Medien
+- Monatliche Recovery-Tests
+- Aufbewahrung nach gesetzlichen Vorgaben
+
+========================================
+7. INCIDENT RESPONSE
+========================================
+
+INCIDENT MELDUNG:
+- Sofortige Meldung an: security@pyramid.de
+- 24/7 Hotline: +49 761 4514-911
+- Keine eigenmächtigen Gegenmaßnahmen
+
+INCIDENT RESPONSE TEAM:
+- IT-Sicherheitsbeauftragter (Leitung)
+- System-Administratoren
+- Netzwerk-Administratoren
+- Rechtsabteilung
+- Geschäftsführung (bei kritischen Vorfällen)
+
+RESPONSE PROZESS:
+1. Identifikation & Bewertung
+2. Eindämmung & Isolation
+3. Untersuchung & Forensik
+4. Bereinigung & Recovery
+5. Nachbereitung & Lessons Learned
+
+========================================
+8. COMPLIANCE & AUDITING
+========================================
+
+GESETZLICHE ANFORDERUNGEN:
+- DSGVO/GDPR Compliance
+- ISO 27001 Zertifizierung angestrebt
+- BSI Grundschutz
+- Branchenspezifische Standards
+
+AUDITING:
+- Kontinuierliches Security Monitoring
+- Quartalweise interne Audits
+- Jährliche externe Penetration Tests
+- Compliance Reviews
+- Vollständige Audit Trails
+
+LOG MANAGEMENT:
+- Zentrale Log-Sammlung (SIEM)
+- Mindestens 90 Tage Aufbewahrung
+- Unveränderbarkeit der Logs
+- Regelmäßige Log-Reviews
+- Automatische Alerting bei Anomalien
+
+========================================
+9. SECURITY AWARENESS
+========================================
+
+SCHULUNGEN:
+- Security Awareness Training bei Einstellung
+- Jährliche Auffrischung für alle Mitarbeiter
+- Spezialschulungen für IT-Personal
+- Phishing Simulationen (monatlich)
+- Security Newsletter (quartalsweise)
+
+VERANTWORTLICHKEITEN:
+- Jeder Mitarbeiter ist für Informationssicherheit verantwortlich
+- Verdächtige Aktivitäten sofort melden
+- Keine Umgehung von Sicherheitsmaßnahmen
+- Vertraulichkeit auch nach Ausscheiden
+
+========================================
+10. CLOUD SECURITY
+========================================
+
+CLOUD NUTZUNG:
+- Nur genehmigte Cloud-Dienste
+- Verschlüsselung aller Cloud-Daten
+- Regelmäßige Überprüfung der Cloud-Anbieter
+- Data Residency in EU
+- Exit-Strategie definiert
+
+CLOUD ACCESS SECURITY BROKER (CASB):
+- Überwachung aller Cloud-Zugriffe
+- DLP für Cloud-Services
+- Schatten-IT Erkennung
+- Compliance Monitoring
+
+========================================
+11. ENTWICKLUNGSSICHERHEIT
+========================================
+
+SECURE CODING:
+- OWASP Top 10 Awareness
+- Code Reviews obligatorisch
+- Statische Code-Analyse (SonarQube)
+- Dependency Scanning
+- Security Testing in CI/CD Pipeline
+
+ENTWICKLUNGSUMGEBUNG:
+- Getrennte Dev/Test/Prod Umgebungen
+- Keine Produktivdaten in Test
+- Versionskontrolle (Git)
+- Sichere Credential Storage
+- Regular Security Updates
+
+========================================
+12. LIEFERANTENSICHERHEIT
+========================================
+
+ANFORDERUNGEN:
+- Security Assessment vor Beauftragung
+- NDAs für vertrauliche Informationen
+- Regelmäßige Überprüfung
+- Incident Notification Vereinbarungen
+- Recht auf Audit
+
+========================================
+13. BUSINESS CONTINUITY
+========================================
+
+DISASTER RECOVERY:
+- RTO: 4 Stunden für kritische Systeme
+- RPO: 1 Stunde für kritische Daten
+- Dokumentierte DR-Prozeduren
+- Halbjährliche DR-Tests
+- Alternative Arbeitsplätze definiert
+
+KRISENMANAGEMENT:
+- Krisenstab definiert
+- Kommunikationsplan vorhanden
+- Eskalationswege dokumentiert
+- Notfall-Kontaktliste aktuell
+
+========================================
+14. VERSTÖSSE UND SANKTIONEN
+========================================
+
+Bei Verstößen gegen diese Policy:
+- Erste Verwarnung: Schriftliche Abmahnung
+- Wiederholte Verstöße: Arbeitsrechtliche Konsequenzen
+- Schwere Verstöße: Fristlose Kündigung möglich
+- Strafrechtliche Verfolgung bei kriminellen Handlungen
+
+========================================
+15. GÜLTIGKEIT UND ÜBERPRÜFUNG
+========================================
+
+- Diese Policy tritt sofort in Kraft
+- Jährliche Überprüfung und Anpassung
+- Bei wesentlichen Änderungen sofortige Updates
+- Alle Mitarbeiter müssen Kenntnisnahme bestätigen
+
+ANSPRECHPARTNER:
+IT-Sicherheitsbeauftragter
+Michael Schmidt
+Tel: +49 761 4514-400
+E-Mail: m.schmidt@pyramid.de
+
+Datenschutzbeauftragter
+Sarah Weber
+Tel: +49 761 4514-401
+E-Mail: datenschutz@pyramid.de
+
+DOKUMENTENINFORMATION:
+Version: 2.0
+Autor: IT-Security Team
+Freigabe: Geschäftsführung
+Nächste Überprüfung: Januar 2025

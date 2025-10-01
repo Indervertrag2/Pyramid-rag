@@ -1,0 +1,14 @@
+Dies ist ein Test-Dokument für die Pyramid Computer GmbH.
+
+Das Unternehmen ist spezialisiert auf IT-Lösungen und bietet verschiedene Services:
+- Software-Entwicklung
+- System-Integration
+- Support und Wartung
+- Hardware-Beratung
+
+Abteilungen:
+- Management: Strategische Planung und Unternehmensentscheidungen
+- IT: Entwicklung und Systemadministration
+- Support: Kundensupport und technische Hilfe
+
+Diese Datei dient zur Testung der RAG-Pipeline und automatischen Metadaten-Erkennung.

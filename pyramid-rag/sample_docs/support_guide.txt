@@ -1,0 +1,228 @@
+PYRAMID COMPUTER SUPPORT HANDBUCH
+
+========================================
+HÄUFIGE PROBLEME UND LÖSUNGEN
+========================================
+
+PROBLEM 1: SERVER STARTET NICHT
+Symptome: Power LED leuchtet nicht, keine Lüftergeräusche
+Lösungen:
+1. Stromversorgung prüfen (Kabel, Steckdose, USV)
+2. Beide Netzteile bei redundanten Systemen prüfen
+3. Power Button 10 Sekunden gedrückt halten (Hard Reset)
+4. CMOS Reset durchführen (Jumper oder Batterie entfernen)
+5. Minimalkonfiguration testen (1 CPU, 1 RAM Modul)
+
+PROBLEM 2: SYSTEM ÜBERHITZUNG
+Symptome: Automatische Abschaltungen, Performance-Einbrüche
+Lösungen:
+1. Luftfilter reinigen/austauschen
+2. Wärmeleitpaste erneuern (nach 3-4 Jahren empfohlen)
+3. Lüfterdrehzahl im BIOS prüfen
+4. Raumtemperatur kontrollieren (max. 25°C empfohlen)
+5. Airflow-Richtung überprüfen (Vorne rein, hinten raus)
+
+PROBLEM 3: RAID DEGRADED STATUS
+Symptome: Warnung im RAID Controller, gelbe LED
+Lösungen:
+1. Defekte Festplatte identifizieren (RAID Utility)
+2. Backup sofort durchführen
+3. Festplatte im laufenden Betrieb tauschen (Hot-Swap)
+4. Rebuild automatisch oder manuell starten
+5. SMART-Werte der anderen Festplatten prüfen
+
+PROBLEM 4: NETZWERK VERBINDUNGSPROBLEME
+Symptome: Keine Verbindung, langsame Übertragung
+Lösungen:
+1. Kabelverbindung prüfen (Link LED)
+2. IP-Konfiguration kontrollieren
+3. Treiber aktualisieren
+4. Jumbo Frames Einstellungen prüfen
+5. Switch/Router Port Konfiguration verifizieren
+
+PROBLEM 5: BLUESCREENS UNTER WINDOWS
+Symptome: BSOD, automatische Neustarts
+Lösungen:
+1. Minidump Analyse mit WinDbg
+2. RAM Test mit MemTest86+
+3. Treiber-Updates installieren
+4. Windows Updates durchführen
+5. Hardware-Kompatibilität prüfen
+
+========================================
+DIAGNOSE TOOLS
+========================================
+
+HARDWARE DIAGNOSE:
+- PYRAMID Diagnostics Suite (auf Support USB)
+- MemTest86+ (RAM Test)
+- CrystalDiskInfo (HDD/SSD SMART)
+- Prime95 (CPU Stresstest)
+- FurMark (GPU Stresstest)
+
+NETZWERK DIAGNOSE:
+- ping, traceroute, nslookup
+- Wireshark (Packet Analyse)
+- iperf3 (Bandbreiten Test)
+- netstat, ss (Verbindungsanalyse)
+
+SYSTEM MONITORING:
+- PYRAMID Monitor (eigene Software)
+- Nagios/Zabbix Integration
+- IPMI/iDRAC Fernwartung
+- SNMP Monitoring
+- Syslog Server
+
+========================================
+FIRMWARE UPDATES
+========================================
+
+UPDATE REIHENFOLGE:
+1. Backup aller Einstellungen
+2. USV Firmware (falls vorhanden)
+3. BIOS/UEFI Update
+4. BMC/IPMI Firmware
+5. RAID Controller Firmware
+6. Netzwerkkarten Firmware
+7. System neu starten
+8. Funktionstest durchführen
+
+WICHTIGE HINWEISE:
+- NIE während eines Gewitters updaten
+- USV muss mindestens 30 Minuten Laufzeit haben
+- Redundante Systeme nacheinander updaten
+- Rollback-Plan erstellen
+- Change Management Prozess befolgen
+
+========================================
+PERFORMANCE OPTIMIERUNG
+========================================
+
+CPU OPTIMIERUNG:
+- Hyperthreading aktivieren
+- Turbo Boost einschalten
+- C-States für Server deaktivieren
+- NUMA korrekt konfigurieren
+- CPU Affinity für kritische Prozesse
+
+SPEICHER OPTIMIERUNG:
+- RAID Cache aktivieren
+- SSD Over-Provisioning (10-20%)
+- Defragmentierung planen
+- TRIM für SSDs aktivieren
+- Storage Tiering nutzen
+
+NETZWERK OPTIMIERUNG:
+- Jumbo Frames (MTU 9000)
+- RSS (Receive Side Scaling)
+- Interrupt Moderation
+- TCP Offloading
+- NIC Teaming/Bonding
+
+========================================
+BACKUP & RECOVERY
+========================================
+
+BACKUP STRATEGIE:
+- 3-2-1 Regel befolgen
+  (3 Kopien, 2 verschiedene Medien, 1 Offsite)
+- Tägliche inkrementelle Backups
+- Wöchentliche Vollbackups
+- Monatliche Archivierung
+- Jährliche Langzeitarchive
+
+RECOVERY VERFAHREN:
+1. Disaster Recovery Plan aktivieren
+2. Prioritäten festlegen (RTO/RPO)
+3. Bare Metal Recovery wenn nötig
+4. Daten-Recovery in Phasen
+5. Funktionstest aller Systeme
+6. Dokumentation des Vorfalls
+
+BACKUP SOFTWARE:
+- Veeam Backup & Replication
+- Acronis Cyber Backup
+- Bacula Enterprise
+- Amanda Enterprise
+- PYRAMID Backup Manager
+
+========================================
+SICHERHEIT
+========================================
+
+GRUNDLEGENDE MASSNAHMEN:
+- BIOS Passwort setzen
+- Secure Boot aktivieren
+- TPM 2.0 nutzen
+- Festplattenverschlüsselung
+- Regelmäßige Security Updates
+
+NETZWERKSICHERHEIT:
+- Firewall Regeln definieren
+- VLANs segmentieren
+- Port Security aktivieren
+- 802.1X Authentifizierung
+- VPN für Fernzugriff
+
+ZUGRIFFSKONTROLLE:
+- Principle of Least Privilege
+- Multi-Faktor Authentifizierung
+- Regelmäßige Passwortänderungen
+- Audit Logging aktivieren
+- Physischer Zugangsschutz
+
+========================================
+WARTUNGSPLAN
+========================================
+
+TÄGLICH:
+- Backup-Status prüfen
+- System-Logs kontrollieren
+- Monitoring Alerts bearbeiten
+
+WÖCHENTLICH:
+- Performance Metriken analysieren
+- Security Updates prüfen
+- Speicherplatz überwachen
+
+MONATLICH:
+- Firmware Updates prüfen
+- Luftfilter reinigen
+- Kabelmanagement prüfen
+- Dokumentation aktualisieren
+
+QUARTAL:
+- Disaster Recovery Test
+- Hardware-Inventur
+- Kapazitätsplanung
+- SLA Review
+
+JÄHRLICH:
+- Komplette Systemwartung
+- Wärmeleitpaste erneuern
+- USV Batterien testen
+- Verkabelung dokumentieren
+
+========================================
+KONTAKT SUPPORT
+========================================
+
+PYRAMID COMPUTER SUPPORT HOTLINE:
+Tel: +49 761 4514-300
+E-Mail: support@pyramid.de
+
+Support Portal: support.pyramid.de
+Remote Support: remote.pyramid.de
+Knowledge Base: kb.pyramid.de
+
+SUPPORT ZEITEN:
+Basic: Mo-Fr 8:00-18:00 Uhr
+Professional: 24/7
+Enterprise: 24/7 Priority
+
+BEI ANRUF BEREITHALTEN:
+- Seriennummer
+- Fehlermeldungen
+- Zeitpunkt des Problems
+- Bereits durchgeführte Schritte
+- Kontaktdaten

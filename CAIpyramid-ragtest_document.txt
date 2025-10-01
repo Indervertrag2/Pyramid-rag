@@ -1,0 +1,9 @@
+Dies ist ein Testdokument für die Pyramid RAG Platform.
+
+Inhalt:
+- Testzweck: Dokumenten-Upload Funktion  
+- Datum: 2025-09-30
+- System: Pyramid RAG
+
+Diese Datei dient dazu, die Upload- und Speicherfunktionalität zu testen.
+Es sollte in der Datenbank gespeichert und indexiert werden.

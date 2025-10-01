@@ -1,0 +1,24 @@
+Python Grundlagen - Cheat Sheet
+
+VARIABLEN:
+name = "Hans"
+age = 25
+is_student = True
+
+LISTEN:
+fruits = ["Apfel", "Banane", "Orange"]
+numbers = [1, 2, 3, 4, 5]
+
+SCHLEIFEN:
+for fruit in fruits:
+    print(fruit)
+
+FUNKTIONEN:
+def greet(name):
+    return f"Hallo {name}!"
+
+KLASSEN:
+class Person:
+    def __init__(self, name, age):
+        self.name = name
+        self.age = age
