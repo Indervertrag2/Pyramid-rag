@@ -3,6 +3,10 @@ FROM node:20-alpine as builder
 
 WORKDIR /app
 
+# Build-time env for Vite bundling (default to backend service URL)
+ARG VITE_API_URL=http://localhost:18000
+ENV VITE_API_URL=$VITE_API_URL
+
 # Copy package files
 COPY package*.json ./
 RUN npm install
@@ -10,13 +14,17 @@ RUN npm install
 # Copy source code
 COPY . .
 
-# Build the application
+# Build the application (Vite picks up VITE_* env)
 RUN npm run build
 
 # Production stage
 FROM node:20-alpine
 
 WORKDIR /app
+
+# Runtime env for the static bundle (kept for consistency)
+ARG VITE_API_URL=http://localhost:18000
+ENV VITE_API_URL=$VITE_API_URL
 
 # Install serve for production
 RUN npm install -g serve

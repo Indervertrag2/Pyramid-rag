@@ -1,9 +1,10 @@
-"""
+﻿"""
 Advanced Document Processing Pipeline for RAG System
 Implements SHA-256 deduplication, metadata extraction, text chunking, and embeddings.
 """
 
 import hashlib
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -17,6 +18,12 @@ try:
     HAS_PYMUPDF = True
 except ImportError:
     HAS_PYMUPDF = False
+
+try:
+    from pypdf import PdfReader
+    HAS_PYPDF = True
+except ImportError:
+    HAS_PYPDF = False
 
 try:
     from docx import Document as DocxDocument
@@ -76,21 +83,50 @@ class DocumentProcessor:
 
         # Initialize embedding model if available
         self.embedding_model = None
+        self.embedding_model_name = os.getenv('EMBEDDING_MODEL', 'paraphrase-multilingual-mpnet-base-v2')
+        preferred_device = os.getenv('EMBEDDING_DEVICE')
+        if preferred_device:
+            self.embedding_device = preferred_device
+        elif HAS_TORCH:
+            try:
+                import torch  # type: ignore
+                self.embedding_device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            except Exception:
+                self.embedding_device = 'cpu'
+        else:
+            self.embedding_device = 'cpu'
+
+        try:
+            self.chunk_size_words = int(os.getenv('DOC_CHUNK_SIZE_WORDS', os.getenv('EMBEDDING_CHUNK_SIZE', '512')))
+        except (TypeError, ValueError):
+            self.chunk_size_words = 512
+
+        try:
+            self.chunk_overlap_words = int(os.getenv('DOC_CHUNK_OVERLAP_WORDS', os.getenv('EMBEDDING_CHUNK_OVERLAP', '50')))
+        except (TypeError, ValueError):
+            self.chunk_overlap_words = 50
+
         if HAS_EMBEDDINGS:
             try:
-                self.embedding_model = SentenceTransformer('paraphrase-multilingual-mpnet-base-v2')
-                print("✅ Embedding model loaded: paraphrase-multilingual-mpnet-base-v2")
+                self.embedding_model = SentenceTransformer(self.embedding_model_name, device=self.embedding_device)
+                logger.info('Embedding model loaded: %s on %s', self.embedding_model_name, self.embedding_device)
             except Exception as e:
-                print(f"⚠️ Could not load embedding model: {e}")
+                logger.warning('Could not load embedding model %s: %s', self.embedding_model_name, e)
 
         # Initialize OCR if available
         self.ocr_engine = None
         if HAS_SURYA:
             try:
                 self.ocr_engine = OCR()
-                print("✅ Surya OCR initialized")
+                print("Surya OCR initialized")
             except Exception as e:
-                print(f"⚠️ Could not initialize OCR: {e}")
+                print(f"Could not initialize OCR: {e}")
+
+    def _sanitize_text(self, text: str) -> str:
+        """Strip characters (like NULL) that cannot be stored in Postgres TEXT."""
+        if not text:
+            return text
+        return text.replace('\x00', ' ')
 
     def calculate_file_hash(self, file_path: Path) -> str:
         """Calculate SHA-256 hash of file for deduplication."""
@@ -138,7 +174,7 @@ class DocumentProcessor:
         metadata = {"extraction_method": "unknown", "success": False}
 
         try:
-            if file_type == FileType.PDF and HAS_PYMUPDF:
+            if file_type == FileType.PDF:
                 content, metadata = self._extract_pdf_text(file_path)
             elif file_type == FileType.WORD and HAS_DOCX:
                 content, metadata = self._extract_docx_text(file_path)
@@ -162,35 +198,74 @@ class DocumentProcessor:
         return content, metadata
 
     def _extract_pdf_text(self, file_path: Path) -> Tuple[str, Dict]:
-        """Extract text from PDF using PyMuPDF."""
-        try:
-            doc = fitz.open(str(file_path))
-            text_content = []
+        """Extract text from PDF using available libraries."""
+        warnings: List[str] = []
 
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                text = page.get_text()
-                if text.strip():
-                    text_content.append(f"[Page {page_num + 1}]\n{text}")
+        if HAS_PYMUPDF:
+            try:
+                doc = fitz.open(str(file_path))
+                text_content = []
 
-            doc.close()
-            content = "\n\n".join(text_content)
+                for page_num in range(len(doc)):
+                    page = doc.load_page(page_num)
+                    text = page.get_text()
+                    if text.strip():
+                        text_content.append(f"[Page {page_num + 1}]\n{text}")
 
-            metadata = {
-                "extraction_method": "pymupdf",
-                "success": True,
-                "pages": len(doc),
-                "character_count": len(content)
-            }
+                page_count = len(doc)
+                doc.close()
+                content = "\n\n".join(text_content).strip()
 
-            return content, metadata
+                if content:
+                    metadata = {
+                        "extraction_method": "pymupdf",
+                        "success": True,
+                        "pages": page_count,
+                        "character_count": len(content)
+                    }
+                    return content, metadata
 
-        except Exception as e:
-            return "", {
-                "extraction_method": "pymupdf_error",
-                "success": False,
-                "error": str(e)
-            }
+                warnings.append("pymupdf_extracted_empty_text")
+
+            except Exception as e:
+                warnings.append(f"pymupdf_error: {e}")
+
+        if HAS_PYPDF:
+            try:
+                reader = PdfReader(str(file_path))
+                text_content = []
+                for page_idx, page in enumerate(reader.pages, 1):
+                    try:
+                        text = page.extract_text() or ""
+                    except Exception as page_error:
+                        warnings.append(f"pypdf_page_error_{page_idx}: {page_error}")
+                        text = ""
+                    text = text.strip()
+                    if text:
+                        text_content.append(f"[Page {page_idx}]\n{text}")
+
+                content = "\n\n".join(text_content).strip()
+                if content:
+                    metadata = {
+                        "extraction_method": "pypdf",
+                        "success": True,
+                        "pages": len(reader.pages),
+                        "character_count": len(content)
+                    }
+                    if warnings:
+                        metadata["warnings"] = warnings
+                    return content, metadata
+
+                warnings.append("pypdf_extracted_empty_text")
+
+            except Exception as e:
+                warnings.append(f"pypdf_error: {e}")
+
+        content, metadata = self._extract_plain_text(file_path)
+        if warnings:
+            metadata = dict(metadata)
+            metadata["warnings"] = warnings
+        return content, metadata
 
     def _extract_docx_text(self, file_path: Path) -> Tuple[str, Dict]:
         """Extract text from DOCX files."""
@@ -353,17 +428,23 @@ class DocumentProcessor:
 
         return metadata
 
-    def chunk_text(self, text: str, chunk_size: int = 512, overlap: int = 50) -> List[Dict]:
+    def chunk_text(self, text: str, chunk_size: Optional[int] = None, overlap: Optional[int] = None) -> List[Dict]:
         """Intelligent text chunking for RAG."""
         if not text.strip():
             return []
 
-        chunks = []
-        words = text.split()
+        effective_chunk = chunk_size or self.chunk_size_words
+        effective_overlap = overlap or self.chunk_overlap_words
+        effective_overlap = min(effective_overlap, effective_chunk - 1) if effective_chunk > 1 else 0
 
-        for i in range(0, len(words), chunk_size - overlap):
-            chunk_words = words[i:i + chunk_size]
+        chunks: List[Dict[str, Any]] = []
+        words = text.split()
+        step = max(1, effective_chunk - effective_overlap)
+
+        for i in range(0, len(words), step):
+            chunk_words = words[i:i + effective_chunk]
             chunk_text = " ".join(chunk_words)
+            chunk_text = self._sanitize_text(chunk_text)
 
             if chunk_text.strip():
                 chunk_info = {
@@ -386,7 +467,7 @@ class DocumentProcessor:
             embeddings = self.embedding_model.encode(text_chunks)
             return embeddings.tolist()
         except Exception as e:
-            print(f"❌ Embedding generation failed: {e}")
+            print(f"âŒ Embedding generation failed: {e}")
             return []
 
     async def process_document(
@@ -429,6 +510,7 @@ class DocumentProcessor:
 
             # 3. Extract text content
             content, extraction_metadata = self.extract_text_content(file_path, file_type)
+            content = self._sanitize_text(content)
             result["content"] = content
 
             # 4. Detect language
@@ -448,6 +530,9 @@ class DocumentProcessor:
                     chunk_texts = [chunk["content"] for chunk in chunks]
                     embeddings = self.generate_embeddings(chunk_texts)
                     result["embeddings"] = embeddings
+                    if embeddings and self.embedding_model_name:
+                        metadata = result.setdefault("metadata", {})
+                        metadata.setdefault("embedding_model", self.embedding_model_name)
 
             # 8. Calculate processing time
             end_time = datetime.now()
@@ -457,10 +542,13 @@ class DocumentProcessor:
 
         except Exception as e:
             result["errors"].append(f"Processing error: {str(e)}")
-            print(f"❌ Document processing failed: {e}")
+            print(f"âŒ Document processing failed: {e}")
 
         return result
 
 
 # Global instance
 document_processor = DocumentProcessor()
+
+
+

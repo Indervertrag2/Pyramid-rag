@@ -31,10 +31,16 @@ Die Pyramid RAG Platform ist eine vollständig on-premise betriebene KI-gestütz
 - GPU: NVIDIA RTX 3090/4090 oder A100
 
 ### Software
+- Python 3.11 (local CLI tooling outside Docker; see docs/local_python_setup.md)
 - Docker 24.0+
 - Docker Compose 2.20+
-- NVIDIA Container Toolkit (für GPU-Support)
-- Windows (später Windows Server) oder Linux (Ubuntu 20.04+ empfohlen)
+- NVIDIA Container Toolkit (fr GPU-Support)
+- Windows (spter Windows Server) oder Linux (Ubuntu 20.04+ empfohlen)
+
+- Docker 24.0+
+- Docker Compose 2.20+
+- NVIDIA Container Toolkit (fr GPU-Support)
+- Windows (spter Windows Server) oder Linux (Ubuntu 20.04+ empfohlen)
 
 ## 🚀 Schnellstart
 

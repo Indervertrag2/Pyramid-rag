@@ -1,0 +1,198 @@
+PYRAMID COMPUTER PRODUKTKATALOG 2024
+
+========================================
+SERVERSYSTEME
+========================================
+
+1. PYRAMID ENTERPRISE SERVER ES-5000
+- Prozessor: Dual Intel Xeon Platinum 8380 (40 Kerne pro CPU)
+- Arbeitsspeicher: Bis zu 4TB DDR4-3200 ECC
+- Speicher: 24x 2.5" NVMe/SATA Hot-Swap Bays
+- RAID: Hardware RAID 0/1/5/6/10/50/60
+- Netzwerk: 4x 10GbE + 2x 25GbE SFP28
+- Redundante Netzteile: 2x 1600W Platinum
+- Betriebssysteme: Windows Server 2022, RHEL, Ubuntu Server, VMware
+- Garantie: 5 Jahre vor Ort Service
+- Preis: ab 12.999 EUR
+
+2. PYRAMID EDGE SERVER ES-2000
+- Prozessor: Intel Xeon E-2388G (8 Kerne)
+- Arbeitsspeicher: Bis zu 128GB DDR4 ECC
+- Speicher: 8x 2.5" SATA/SAS Bays
+- RAID: Software RAID Support
+- Netzwerk: 2x 1GbE + 2x 10GbE
+- Netzteil: 500W 80+ Gold
+- Kompaktes 1U Gehäuse
+- Garantie: 3 Jahre NBD Service
+- Preis: ab 2.999 EUR
+
+========================================
+WORKSTATIONS
+========================================
+
+3. PYRAMID CREATOR WORKSTATION CW-9000
+- Prozessor: Intel Core i9-14900K (24 Kerne)
+- Grafikkarte: NVIDIA RTX 4090 24GB
+- Arbeitsspeicher: 64GB DDR5-5600
+- Systemspeicher: 2TB NVMe Gen5 SSD
+- Datenspeicher: 4TB NVMe + 8TB HDD
+- Netzteil: 1000W 80+ Platinum
+- Flüsterleise Kühlung
+- Windows 11 Pro für Workstations
+- Garantie: 3 Jahre Pickup & Return
+- Preis: ab 4.599 EUR
+
+4. PYRAMID DEVELOPER WORKSTATION DW-5000
+- Prozessor: AMD Ryzen 9 7950X (16 Kerne)
+- Grafikkarte: NVIDIA RTX 4070 Ti 12GB
+- Arbeitsspeicher: 32GB DDR5-5200
+- Speicher: 1TB NVMe Gen4 SSD
+- Netzteil: 750W 80+ Gold
+- Ubuntu 22.04 LTS vorinstalliert
+- Garantie: 3 Jahre vor Ort
+- Preis: ab 2.799 EUR
+
+========================================
+EMBEDDED SYSTEMS
+========================================
+
+5. PYRAMID INDUSTRIAL PC IPC-1000
+- Prozessor: Intel Core i5-1235U (10 Kerne)
+- Arbeitsspeicher: 16GB LPDDR4 onboard
+- Speicher: 256GB Industrial SSD
+- I/O: 6x USB 3.0, 4x RS-232/485, 2x CAN
+- Netzwerk: 2x 1GbE Intel
+- Betriebstemperatur: -20°C bis +60°C
+- Lüfterlos, IP65 Gehäuse
+- MTBF: >100.000 Stunden
+- Garantie: 5 Jahre
+- Preis: ab 1.299 EUR
+
+6. PYRAMID EDGE GATEWAY EG-500
+- Prozessor: ARM Cortex-A72 Quad-Core
+- Arbeitsspeicher: 4GB LPDDR4
+- Speicher: 32GB eMMC + microSD Slot
+- Konnektivität: WiFi 6, BT 5.2, 4G/5G Option
+- I/O: 4x USB, GPIO, I2C, SPI
+- Stromverbrauch: <10W
+- DIN-Rail Montage
+- Docker & Kubernetes Support
+- Garantie: 3 Jahre
+- Preis: ab 399 EUR
+
+========================================
+STORAGE SOLUTIONS
+========================================
+
+7. PYRAMID NAS PROFESSIONAL NP-8000
+- Kapazität: 8 Bays, bis zu 160TB
+- Prozessor: Intel Xeon D-1541 (8 Kerne)
+- Arbeitsspeicher: 32GB DDR4 ECC
+- Netzwerk: 4x 1GbE + 2x 10GbE SFP+
+- RAID: 0/1/5/6/10/50/60, Hot Spare
+- Features: Snapshots, Replikation, Verschlüsselung
+- Betriebssystem: TrueNAS Enterprise
+- Garantie: 5 Jahre mit NBD Austausch
+- Preis: ab 3.999 EUR (ohne Festplatten)
+
+8. PYRAMID BACKUP APPLIANCE BA-4000
+- Kapazität: 4 Bays, bis zu 80TB
+- Deduplizierung & Kompression
+- Tape Library Support (LTO-9)
+- 10GbE Netzwerk
+- Veeam & Acronis zertifiziert
+- AES-256 Verschlüsselung
+- Garantie: 3 Jahre
+- Preis: ab 2.499 EUR
+
+========================================
+CLOUD & VIRTUALISIERUNG
+========================================
+
+9. PYRAMID PRIVATE CLOUD APPLIANCE PCA-10000
+- 4x Compute Nodes (je 2x Xeon Gold)
+- 2TB RAM gesamt
+- 100TB All-Flash Storage
+- VMware vSphere oder Proxmox
+- Vollständig vorkonfiguriert
+- Management Dashboard
+- 24/7 Support Option
+- Preis: ab 49.999 EUR
+
+10. PYRAMID KUBERNETES CLUSTER KC-3000
+- 3x Master Nodes + 6x Worker Nodes
+- Rancher Management Platform
+- Integrated Load Balancer
+- Persistent Volume Support
+- GitOps Ready (ArgoCD)
+- Monitoring Stack (Prometheus/Grafana)
+- Garantie: 3 Jahre mit 24/7 Support
+- Preis: ab 19.999 EUR
+
+========================================
+SOFTWARE & SERVICES
+========================================
+
+11. PYRAMID OS - Enterprise Linux Distribution
+- Basiert auf RHEL/Rocky Linux
+- Optimiert für Pyramid Hardware
+- Included: Management Tools, Monitoring
+- Support: 24/7 verfügbar
+- Lizenz: ab 299 EUR/Jahr pro Server
+
+12. PYRAMID CLOUD MANAGER
+- Zentrale Verwaltung aller Systeme
+- Asset Management
+- Patch Management
+- Backup Orchestration
+- Compliance Reporting
+- Lizenz: ab 99 EUR/Monat
+
+========================================
+SUPPORT & WARTUNG
+========================================
+
+PYRAMID CARE PAKETE:
+
+BASIC CARE
+- Business Hours Support (Mo-Fr 8-18 Uhr)
+- Remote Diagnose
+- Software Updates
+- ab 99 EUR/Monat
+
+PROFESSIONAL CARE
+- 24/7 Support
+- 4h Reaktionszeit vor Ort
+- Präventive Wartung
+- ab 299 EUR/Monat
+
+ENTERPRISE CARE
+- 24/7 Priority Support
+- 2h Reaktionszeit
+- Dedizierter Account Manager
+- Ersatzteilbevorratung
+- ab 599 EUR/Monat
+
+========================================
+KONTAKT & BESTELLUNG
+========================================
+
+Pyramid Computer GmbH
+Bötzinger Straße 60
+79111 Freiburg
+Deutschland
+
+Vertrieb:
+Tel: +49 761 4514-200
+E-Mail: vertrieb@pyramid.de
+
+Technischer Support:
+Tel: +49 761 4514-300
+E-Mail: support@pyramid.de
+
+Online Shop: shop.pyramid.de
+Konfigurator: config.pyramid.de
+
+Alle Preise verstehen sich zzgl. MwSt.
+Änderungen und Irrtümer vorbehalten.
+Stand: Januar 2024

@@ -7,7 +7,7 @@ from typing import Dict, Any
 class SimpleOllamaClient:
     """Simple synchronous Ollama client"""
 
-    def __init__(self, base_url: str = "http://ollama:11434"):
+    def __init__(self, base_url: str = "http://pyramid-ollama:11434"):
         self.base_url = base_url
         self.model = "qwen2.5:7b"
 

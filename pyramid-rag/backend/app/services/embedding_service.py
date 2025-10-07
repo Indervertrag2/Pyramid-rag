@@ -1,130 +1,125 @@
-import torch
+﻿import logging
+import os
 from typing import List, Optional, Dict, Any
+
 import numpy as np
+import torch
 from sentence_transformers import SentenceTransformer
 import tiktoken
-import os
+
+
+logger = logging.getLogger(__name__)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
 
 
 class EmbeddingService:
-    def __init__(self):
-        self.device = settings.EMBEDDING_DEVICE if torch.cuda.is_available() else 'cpu'
-        self.model = None
-        self.tokenizer = None
+    """Utility wrapper around sentence-transformers for query/document embeddings."""
+
+    def __init__(self) -> None:
+        self.model_name = os.getenv("EMBEDDING_MODEL", "paraphrase-multilingual-mpnet-base-v2")
+        preferred_device = os.getenv("EMBEDDING_DEVICE")
+        if preferred_device:
+            self.device = preferred_device
+        else:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        self.default_chunk_size = _env_int("EMBEDDING_CHUNK_SIZE", 512)
+        self.default_chunk_overlap = _env_int("EMBEDDING_CHUNK_OVERLAP", 50)
+        self.default_batch_size = _env_int("EMBEDDING_BATCH_SIZE", 16)
+
+        self.model: Optional[SentenceTransformer] = None
+        self.tokenizer: Optional[tiktoken.Encoding] = None
+        self.embedding_dim: int = 0
+
         self._initialize_model()
 
-    def _initialize_model(self):
-        """Initialize the multilingual embedding model."""
-        print(f"Lade Embedding-Modell: {settings.EMBEDDING_MODEL}")
-        print(f"Verwende Gerät: {self.device}")
+    def _initialize_model(self) -> None:
+        """Load the sentence-transformer model and tokenizer."""
+        logger.info("Loading embedding model %s on device %s", self.model_name, self.device)
 
-        # Load multilingual model that supports German and English
-        self.model = SentenceTransformer(
-            settings.EMBEDDING_MODEL,
-            device=self.device
-        )
+        try:
+            self.model = SentenceTransformer(self.model_name, device=self.device)
+            # Resolve embedding dimension lazily if available
+            if hasattr(self.model, "get_sentence_embedding_dimension"):
+                self.embedding_dim = int(self.model.get_sentence_embedding_dimension())
+            else:
+                sample = self.model.encode(["probe"], convert_to_numpy=True)
+                self.embedding_dim = len(sample[0]) if len(sample) else 0
+        except Exception as exc:  # pragma: no cover - hard failure is surfaced to caller
+            logger.exception("Failed to load embedding model %s", self.model_name)
+            raise
 
-        # Initialize tokenizer for token counting
         try:
             self.tokenizer = tiktoken.get_encoding("cl100k_base")
-        except:
+        except Exception:
             self.tokenizer = tiktoken.get_encoding("gpt2")
 
     def count_tokens(self, text: str) -> int:
-        """Count the number of tokens in text."""
+        """Estimate token count for a piece of text."""
+        if not self.tokenizer:
+            raise RuntimeError("Tokenizer not initialised")
         return len(self.tokenizer.encode(text))
 
     def chunk_text(
         self,
         text: str,
-        chunk_size: int = None,
-        chunk_overlap: int = None,
-        separator: str = "\n\n"
+        chunk_size: Optional[int] = None,
+        chunk_overlap: Optional[int] = None,
+        separator: str = "\n\n",
     ) -> List[Dict[str, Any]]:
-        """Split text into chunks for processing."""
-        chunk_size = chunk_size or settings.CHUNK_SIZE
-        chunk_overlap = chunk_overlap or settings.CHUNK_OVERLAP
+        """Split text into overlapping chunks suitable for embedding."""
+        if not text.strip():
+            return []
 
-        # Split by paragraphs first if possible
+        target_chunk_size = chunk_size or self.default_chunk_size
+        target_overlap = chunk_overlap or self.default_chunk_overlap
+
         if separator in text:
-            paragraphs = text.split(separator)
+            segments = text.split(separator)
         else:
-            # Fallback to sentence splitting
-            paragraphs = text.replace('. ', '.\n').split('\n')
+            segments = text.replace('. ', '.\n').split('\n')
 
-        chunks = []
-        current_chunk = []
+        chunks: List[Dict[str, Any]] = []
+        current_segment: List[str] = []
         current_tokens = 0
 
-        for paragraph in paragraphs:
-            paragraph_tokens = self.count_tokens(paragraph)
+        for segment in segments:
+            segment_tokens = self.count_tokens(segment) if segment else 0
 
-            # If paragraph is too large, split it further
-            if paragraph_tokens > chunk_size:
-                # Split by sentences
-                sentences = paragraph.split('. ')
-                for sentence in sentences:
-                    sentence_tokens = self.count_tokens(sentence)
+            if current_tokens + segment_tokens > target_chunk_size and current_segment:
+                chunk_text = separator.join(current_segment) if separator == "\n\n" else ' '.join(current_segment)
+                chunks.append({
+                    'content': chunk_text,
+                    'token_count': self.count_tokens(chunk_text),
+                    'chunk_index': len(chunks)
+                })
 
-                    if current_tokens + sentence_tokens > chunk_size:
-                        if current_chunk:
-                            chunk_text = ' '.join(current_chunk)
-                            chunks.append({
-                                'content': chunk_text,
-                                'token_count': self.count_tokens(chunk_text),
-                                'chunk_index': len(chunks)
-                            })
+                if target_overlap > 0 and current_segment:
+                    overlap_tokens = 0
+                    overlap_segments: List[str] = []
+                    for item in reversed(current_segment):
+                        item_tokens = self.count_tokens(item)
+                        if overlap_tokens + item_tokens > target_overlap:
+                            break
+                        overlap_segments.insert(0, item)
+                        overlap_tokens += item_tokens
+                    current_segment = overlap_segments
+                    current_tokens = overlap_tokens
+                else:
+                    current_segment = []
+                    current_tokens = 0
 
-                            # Keep overlap
-                            if chunk_overlap > 0:
-                                overlap_sentences = []
-                                overlap_tokens = 0
-                                for sent in reversed(current_chunk):
-                                    sent_tokens = self.count_tokens(sent)
-                                    if overlap_tokens + sent_tokens <= chunk_overlap:
-                                        overlap_sentences.insert(0, sent)
-                                        overlap_tokens += sent_tokens
-                                    else:
-                                        break
-                                current_chunk = overlap_sentences
-                                current_tokens = overlap_tokens
-                            else:
-                                current_chunk = []
-                                current_tokens = 0
+            current_segment.append(segment)
+            current_tokens += segment_tokens
 
-                    current_chunk.append(sentence)
-                    current_tokens += sentence_tokens
-            else:
-                # Add paragraph to current chunk
-                if current_tokens + paragraph_tokens > chunk_size:
-                    if current_chunk:
-                        chunk_text = separator.join(current_chunk)
-                        chunks.append({
-                            'content': chunk_text,
-                            'token_count': self.count_tokens(chunk_text),
-                            'chunk_index': len(chunks)
-                        })
-
-                        # Keep overlap
-                        if chunk_overlap > 0 and len(current_chunk) > 1:
-                            overlap_text = current_chunk[-1]
-                            overlap_tokens = self.count_tokens(overlap_text)
-                            if overlap_tokens <= chunk_overlap:
-                                current_chunk = [overlap_text]
-                                current_tokens = overlap_tokens
-                            else:
-                                current_chunk = []
-                                current_tokens = 0
-                        else:
-                            current_chunk = []
-                            current_tokens = 0
-
-                current_chunk.append(paragraph)
-                current_tokens += paragraph_tokens
-
-        # Add final chunk
-        if current_chunk:
-            chunk_text = separator.join(current_chunk) if separator == "\n\n" else ' '.join(current_chunk)
+        if current_segment:
+            chunk_text = separator.join(current_segment) if separator == "\n\n" else ' '.join(current_segment)
             chunks.append({
                 'content': chunk_text,
                 'token_count': self.count_tokens(chunk_text),
@@ -133,85 +128,61 @@ class EmbeddingService:
 
         return chunks
 
-    def generate_embeddings(
-        self,
-        texts: List[str],
-        batch_size: Optional[int] = None
-    ) -> List[np.ndarray]:
-        """Generate embeddings for a list of texts."""
-        batch_size = batch_size or settings.EMBEDDING_BATCH_SIZE
-
+    def generate_embeddings(self, texts: List[str], batch_size: Optional[int] = None) -> List[np.ndarray]:
+        """Generate embeddings for multiple texts."""
         if not texts:
             return []
+        if not self.model:
+            raise RuntimeError("Embedding model not initialised")
 
-        # Process in batches for memory efficiency
-        all_embeddings = []
+        effective_batch_size = batch_size or self.default_batch_size
+        vectors: List[np.ndarray] = []
 
-        for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i:i + batch_size]
-
-            # Generate embeddings
+        for start in range(0, len(texts), effective_batch_size):
+            batch = texts[start:start + effective_batch_size]
             with torch.no_grad():
                 embeddings = self.model.encode(
-                    batch_texts,
+                    batch,
                     convert_to_numpy=True,
-                    normalize_embeddings=True,  # Normalize for cosine similarity
-                    show_progress_bar=False
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
                 )
+            vectors.extend(embeddings)
 
-            all_embeddings.extend(embeddings)
-
-        return all_embeddings
+        return vectors
 
     def generate_query_embedding(self, query: str) -> np.ndarray:
-        """Generate embedding for a search query."""
+        """Generate an embedding vector for a query string."""
+        if not self.model:
+            raise RuntimeError("Embedding model not initialised")
         with torch.no_grad():
-            embedding = self.model.encode(
+            return self.model.encode(
                 query,
                 convert_to_numpy=True,
                 normalize_embeddings=True,
-                show_progress_bar=False
+                show_progress_bar=False,
             )
-        return embedding
 
-    def calculate_similarity(
-        self,
-        query_embedding: np.ndarray,
-        document_embeddings: List[np.ndarray]
-    ) -> List[float]:
-        """Calculate cosine similarity between query and documents."""
+    def calculate_similarity(self, query_embedding: np.ndarray, document_embeddings: List[np.ndarray]) -> List[float]:
+        """Calculate cosine similarity scores between query and document vectors."""
         if not document_embeddings:
             return []
+        doc_matrix = np.vstack(document_embeddings)
+        return doc_matrix.dot(query_embedding)
 
-        # Convert to numpy array for efficient computation
-        doc_embeddings_matrix = np.vstack(document_embeddings)
-
-        # Calculate cosine similarity (embeddings are normalized)
-        similarities = np.dot(doc_embeddings_matrix, query_embedding)
-
-        return similarities.tolist()
-
-    def rerank_results(
-        self,
-        query: str,
-        results: List[Dict[str, Any]],
-        top_k: int = 10
-    ) -> List[Dict[str, Any]]:
-        """Rerank search results using cross-encoder if available."""
+    def rerank_results(self, query: str, results: List[Dict[str, Any]], top_k: int = 10) -> List[Dict[str, Any]]:
+        """Naive rerank helper – returns top_k items by existing score."""
         if not results:
             return []
-
-        # For now, return top_k results
-        # In production, you could use a cross-encoder model for better reranking
-        return sorted(results, key=lambda x: x.get('score', 0), reverse=True)[:top_k]
+        return sorted(results, key=lambda item: item.get('score', 0), reverse=True)[:top_k]
 
     def get_model_info(self) -> Dict[str, Any]:
-        """Get information about the embedding model."""
+        """Expose runtime metadata about the embedding backend."""
         return {
-            "model_name": os.getenv('EMBEDDING_MODEL', 'paraphrase-multilingual-MiniLM-L12-v2'),
+            "model_name": self.model_name,
             "device": self.device,
-            "dimension": int(os.getenv('VECTOR_DIMENSION', '384')),
-            "max_sequence_length": self.model.max_seq_length if self.model else 0,
+            "dimension": self.embedding_dim,
+            "max_sequence_length": getattr(self.model, "max_seq_length", 0) if self.model else 0,
             "cuda_available": torch.cuda.is_available(),
-            "gpu_name": torch.cuda.get_device_name() if torch.cuda.is_available() else None
+            "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         }

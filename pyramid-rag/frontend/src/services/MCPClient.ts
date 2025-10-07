@@ -32,6 +32,16 @@ export interface Citation {
   relevance_score: number;
   snippet: string;
 }
+export interface UploadedDocumentPayload {
+  id: string;
+  title: string;
+  scope: 'GLOBAL' | 'CHAT';
+  content?: string;
+  content_length?: number;
+  mime_type?: string;
+  meta_data?: Record<string, any>;
+}
+
 
 export interface MCPToolsResponse {
   tools: Record<string, MCPToolDefinition>;
@@ -48,9 +58,28 @@ class MCPClient {
   private baseUrl: string;
   private token: string | null;
 
-  constructor(baseUrl: string = 'http://localhost:18000') {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    const envBase = (import.meta as any)?.env?.VITE_API_URL as string | undefined;
+
+    if (baseUrl) {
+      this.baseUrl = baseUrl.replace(/\/$/, '');
+    } else if (envBase) {
+      this.baseUrl = envBase.replace(/\/$/, '');
+    } else {
+      const { protocol, hostname, port } = window.location;
+      const localDevPorts = new Set(['3000', '3001', '3002', '5173']);
+      if (port && localDevPorts.has(port)) {
+        this.baseUrl = `${protocol}//${hostname}:18000`;
+      } else {
+        this.baseUrl = `${protocol}//${hostname}${port ? `:${port}` : ''}`.replace(/\/$/, '');
+      }
+    }
+
     this.token = localStorage.getItem('access_token');
+
+    if ((import.meta as any)?.env?.DEV) {
+      console.debug('[MCPClient] baseUrl', this.baseUrl);
+    }
   }
 
   /**
@@ -63,8 +92,9 @@ class MCPClient {
       rag_enabled?: boolean;
       session_id?: string;
       department?: string;
-      uploaded_documents?: any[];
+      uploaded_documents?: UploadedDocumentPayload[];
       onChunk?: (chunk: string) => void;
+      onDone?: (payload: any) => void;
       onComplete?: () => void;
       onError?: (error: string) => void;
     } = {}
@@ -87,7 +117,7 @@ class MCPClient {
           context: {
             rag_enabled: options.rag_enabled ?? true,
             department: options.department,
-            uploaded_documents: options.uploaded_documents
+            uploaded_documents: options.uploaded_documents ?? []
           }
         })
       });
@@ -104,12 +134,16 @@ class MCPClient {
       }
 
       let buffer = '';
+      let currentEvent: string | null = null;
+      let completed = false;
+      let receivedChunk = false;
 
       while (true) {
         const { done, value } = await reader.read();
 
         if (done) {
-          if (options.onComplete) {
+          if (!completed && options.onComplete) {
+            completed = true;
             options.onComplete();
           }
           break;
@@ -117,30 +151,100 @@ class MCPClient {
 
         buffer += decoder.decode(value, { stream: true });
 
-        // Process SSE messages
         const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+        buffer = lines.pop() ?? '';
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.chunk && options.onChunk) {
-                options.onChunk(data.chunk);
-              }
-            } catch (e) {
-              console.error('Failed to parse SSE data:', e);
-            }
-          } else if (line.startsWith('event: ')) {
-            const event = line.slice(7);
-            if (event === 'error' && options.onError) {
-              options.onError('Stream error');
-            } else if (event === 'done' && options.onComplete) {
+        for (const rawLine of lines) {
+          const trimmedLine = rawLine.trim();
+
+          if (!trimmedLine) {
+            currentEvent = null;
+            continue;
+          }
+
+          if (trimmedLine.startsWith('event:')) {
+            currentEvent = trimmedLine.slice(6).trim();
+            continue;
+          }
+
+          if (!trimmedLine.startsWith('data:')) {
+            continue;
+          }
+
+          const dataStr = trimmedLine.slice(5).trim();
+          if (!dataStr) {
+            continue;
+          }
+
+          if (dataStr === '[DONE]') {
+            if (!completed && options.onComplete) {
+              completed = true;
               options.onComplete();
+            }
+            currentEvent = null;
+            continue;
+          }
+
+          try {
+            const payload: any = JSON.parse(dataStr);
+            const isObject = typeof payload === 'object' && payload !== null;
+
+            if (isObject && 'error' in payload && options.onError) {
+              options.onError(payload.error);
+              currentEvent = null;
+              continue;
+            }
+
+            if (currentEvent === 'error' && options.onError) {
+              options.onError(typeof payload === 'string' ? payload : 'Stream error');
+              currentEvent = null;
+              continue;
+            }
+
+            if (currentEvent === 'done') {
+              if (!completed && options.onComplete) {
+                completed = true;
+                options.onComplete();
+              }
+              if (options.onDone) {
+                options.onDone(payload);
+              }
+              currentEvent = null;
+              continue;
+            }
+
+            if (isObject) {
+              const chunkCandidate =
+                'chunk' in payload ? payload.chunk :
+                typeof payload.data === 'string' ? payload.data :
+                typeof payload.message === 'string' ? payload.message :
+                payload.message?.content ?? payload.content ?? null;
+
+              if (chunkCandidate !== null && chunkCandidate !== undefined && options.onChunk) {
+                receivedChunk = true;
+                options.onChunk(String(chunkCandidate));
+              }
+            } else if (typeof payload === 'string' && options.onChunk) {
+              receivedChunk = true;
+              options.onChunk(payload);
+            }
+
+            if ((currentEvent === 'done' || (isObject && payload.status === 'complete')) && options.onComplete && !completed) {
+              completed = true;
+              options.onComplete();
+            }
+          } catch (e) {
+            if (import.meta.env?.DEV) {
+              console.error('Failed to parse SSE data:', e, { rawLine, dataStr });
             }
           }
         }
       }
+
+      if (!receivedChunk && import.meta.env?.DEV) {
+        console.warn('MCP stream finished without chunks');
+      }
+
     } catch (error) {
       console.error('Stream error:', error);
       if (options.onError) {
@@ -369,6 +473,13 @@ class MCPClient {
   }
 
   /**
+   * Expose base URL for other services
+   */
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
+  /**
    * Update auth token
    */
   updateToken(token: string): void {
@@ -381,3 +492,7 @@ export const mcpClient = new MCPClient();
 
 // Export class for testing
 export default MCPClient;
+
+
+
+

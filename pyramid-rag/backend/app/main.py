@@ -9,9 +9,23 @@ from pydantic import BaseModel
 import uvicorn
 import os
 from datetime import datetime, timedelta, timezone
+from enum import Enum
+import time
 
 from app.database import get_db, init_db
-from app.models import User, Document, ChatSession, ChatMessage, DocumentChunk, Department, FileType, ChatFile, ChatType, FileScope
+from app.models import (
+    User,
+    Document,
+    ChatSession,
+    ChatMessage,
+    DocumentChunk,
+    DocumentEmbedding,
+    Department,
+    FileType,
+    ChatFile,
+    ChatType,
+    FileScope,
+)
 from app.schemas import (
     LoginRequest, TokenResponse, UserResponse, UserCreate, UserUpdate, UserCreateRequest,
     DocumentResponse, DocumentListResponse, DocumentCreate,
@@ -19,13 +33,15 @@ from app.schemas import (
     SearchRequest, SearchResponse, SearchResultItem,
     SystemStatsResponse, HealthCheckResponse,
     DepartmentEnum, FileTypeEnum,
-    ChatSessionCreateRequest, ChatSessionUpdateRequest, ChatFileResponse, ChatTypeEnum, FileScopeEnum
+    ChatSessionCreateRequest, ChatSessionUpdateRequest, ChatFileResponse, ChatFileDetailResponse, ChatTypeEnum, FileScopeEnum
 )
 from app.auth import (
     authenticate_user, create_access_token, create_refresh_token,
     get_current_user, create_user as auth_create_user, get_password_hash
 )
 from app.services.document_processor import document_processor
+from app.services.upload_response import prepare_upload_response
+from app.services.text_utils import sanitize_document_text
 import shutil
 from pathlib import Path
 import uuid
@@ -40,7 +56,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 app = FastAPI(
     title="Pyramid RAG Platform",
     version="1.0.0",
-    description="Enterprise RAG Platform für Pyramid Computer GmbH"
+    description="Enterprise RAG Platform fÃ¼r Pyramid Computer GmbH"
 )
 
 # CORS configuration
@@ -326,6 +342,45 @@ async def system_metrics(
 
     return PlainTextResponse("\n".join(metrics), media_type="text/plain")
 
+# Prometheus-compatible metrics endpoint (no auth) for Prometheus scrape
+@app.get("/metrics")
+async def metrics(db: Session = Depends(get_db)):
+    """Expose selected metrics in Prometheus text format (no auth).
+    Intended for internal scraping by Prometheus in the Docker network."""
+    metrics = []
+    try:
+        # Basic DB metrics
+        try:
+            db_size = db.execute(text("""
+                SELECT pg_database_size('pyramid_rag') as size
+            """)).scalar()
+            metrics.append(f"pyramid_database_size_bytes {db_size}")
+        except Exception:
+            pass
+
+        # Counts
+        try:
+            total_docs = db.query(Document).count()
+            metrics.append(f"pyramid_documents_total {total_docs}")
+        except Exception:
+            pass
+
+        try:
+            total_users = db.query(User).count()
+            metrics.append(f"pyramid_users_total {total_users}")
+        except Exception:
+            pass
+
+        # System resource metrics
+        try:
+            import psutil
+            metrics.append(f"pyramid_system_cpu_percent {psutil.cpu_percent()}")
+            metrics.append(f"pyramid_system_memory_percent {psutil.virtual_memory().percent}")
+        except Exception:
+            pass
+    finally:
+        return PlainTextResponse("\n".join(metrics) + "\n", media_type="text/plain")
+
 # Authentication endpoints
 @app.post("/api/v1/auth/register", response_model=UserResponse)
 async def register(
@@ -363,7 +418,7 @@ async def login(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ungültige E-Mail oder Passwort",
+            detail="UngÃ¼ltige E-Mail oder Passwort",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -453,6 +508,60 @@ async def get_document(
 
 # NEW RAG-enabled Upload API
 # Created: 2025-09-26 09:00 UTC
+
+
+@app.get("/api/v1/chat/files/{file_id}", response_model=ChatFileDetailResponse)
+async def get_chat_file_detail(
+    file_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    chat_file = db.query(ChatFile).filter(ChatFile.id == file_id).first()
+
+    if not chat_file:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat file not found"
+        )
+
+    if not current_user.is_superuser and chat_file.session.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+
+    file_type_value = chat_file.file_type.value if chat_file.file_type else FileType.OTHER.value
+    scope_value = chat_file.scope.value if chat_file.scope else FileScope.CHAT.value
+    full_content = chat_file.content or ""
+    sanitized_content = sanitize_document_text(full_content)
+    content_length = len(sanitized_content)
+    content_preview = sanitized_content[:200] + "..." if content_length > 200 else sanitized_content
+    content_excerpt = sanitized_content[:8000]
+
+    return ChatFileDetailResponse(
+        id=chat_file.id,
+        filename=chat_file.filename,
+        original_filename=chat_file.original_filename,
+        file_type=file_type_value,
+        file_size=chat_file.file_size or 0,
+        title=chat_file.title,
+        description=chat_file.description,
+        scope=scope_value,
+        save_to_company=chat_file.save_to_company,
+        processed=chat_file.processed,
+        processing_error=chat_file.processing_error,
+        created_at=chat_file.created_at,
+        updated_at=chat_file.updated_at,
+        mime_type=chat_file.mime_type,
+        file_hash=chat_file.file_hash,
+        content=content_excerpt,
+        content_preview=content_preview,
+        content_length=content_length,
+        language=chat_file.language,
+        meta_data=chat_file.meta_data or {}
+    )
+
+
 @app.post("/api/v1/documents/upload")
 async def upload_document_unified(
     file: UploadFile = File(...),
@@ -463,7 +572,7 @@ async def upload_document_unified(
     db: Session = Depends(get_db)
 ):
     """
-    🚀 NEW UNIFIED UPLOAD API (2025) - Advanced RAG Pipeline
+    ðŸš€ NEW UNIFIED UPLOAD API (2025) - Advanced RAG Pipeline
 
     Features:
     - SHA-256 deduplication prevents duplicate files
@@ -511,7 +620,7 @@ async def upload_document_unified(
         )
 
     try:
-        # 🔥 PROCESS WITH ADVANCED DOCUMENT PROCESSOR (2025)
+        # ðŸ”¥ PROCESS WITH ADVANCED DOCUMENT PROCESSOR (2025)
         processing_result = await document_processor.process_document(
             file_path=file_path,
             original_filename=file.filename or "unknown",
@@ -541,14 +650,21 @@ async def upload_document_unified(
                     "created_at": existing_doc.created_at.isoformat()
                 }
 
-        # Create document record
+        response_metadata = processing_result.get("metadata") if isinstance(processing_result.get("metadata"), dict) else {}
+        visibility_normalized = (visibility or "department").lower()
+
         if scope == FileScopeEnum.GLOBAL:
             # Store in company database (Document table)
-            # Add visibility information to metadata
-            enhanced_metadata = processing_result["metadata"].copy()
-            enhanced_metadata["visibility"] = visibility  # "all" or "department"
+            enhanced_metadata = dict(response_metadata)
+            enhanced_metadata["visibility"] = visibility_normalized
             enhanced_metadata["uploaded_by_department"] = current_user.primary_department.value
             enhanced_metadata["uploaded_by_email"] = current_user.email
+            if visibility_normalized == "all":
+                enhanced_metadata["allowed_departments"] = ["ALL"]
+            else:
+                enhanced_metadata["allowed_departments"] = [current_user.primary_department.value]
+
+            embedding_model_name = enhanced_metadata.get("embedding_model", "paraphrase-multilingual-mpnet-base-v2")
 
             document = Document(
                 id=uuid.uuid4(),
@@ -559,7 +675,7 @@ async def upload_document_unified(
                 file_size=os.path.getsize(file_path),
                 mime_type=processing_result["mime_type"],
                 file_hash=file_hash,
-                title=processing_result.get("metadata", {}).get("title", file.filename),
+                title=enhanced_metadata.get("title", file.filename),
                 content=processing_result["content"],
                 language=processing_result["language"],
                 meta_data=enhanced_metadata,
@@ -573,24 +689,48 @@ async def upload_document_unified(
             db.commit()
             db.refresh(document)
 
-            # Store chunks and embeddings
-            if processing_result["chunks"]:
-                for i, chunk_info in enumerate(processing_result["chunks"]):
+            chunks = processing_result.get("chunks") or []
+            chunk_records: List[DocumentChunk] = []
+            if chunks:
+                for i, chunk_info in enumerate(chunks):
                     chunk = DocumentChunk(
                         id=uuid.uuid4(),
                         document_id=document.id,
                         chunk_index=i,
                         content=chunk_info["content"],
                         content_length=chunk_info["character_count"],
-                        meta_data={"word_count": chunk_info["word_count"]},
+                        meta_data={
+                            "word_count": chunk_info["word_count"],
+                            "start_word": chunk_info.get("start_word"),
+                            "end_word": chunk_info.get("end_word"),
+                        },
                         token_count=chunk_info["word_count"],
                         created_at=datetime.utcnow()
                     )
                     db.add(chunk)
+                    chunk_records.append(chunk)
+
+                db.flush()
+
+                embeddings = processing_result.get("embeddings") or []
+                if embeddings:
+                    for chunk_obj, embedding_vector in zip(chunk_records, embeddings):
+                        embedding_record = DocumentEmbedding(
+                            id=uuid.uuid4(),
+                            document_id=document.id,
+                            chunk_id=chunk_obj.id,
+                            embedding=embedding_vector,
+                            model_name=embedding_model_name
+                        )
+                        db.add(embedding_record)
+
                 db.commit()
+
+            response_metadata = enhanced_metadata
 
         else:
             # Store as chat file (ChatFile table)
+            chat_metadata = dict(response_metadata)
             chat_file = ChatFile(
                 id=uuid.uuid4(),
                 session_id=session_id,
@@ -601,10 +741,10 @@ async def upload_document_unified(
                 file_size=os.path.getsize(file_path),
                 mime_type=processing_result["mime_type"],
                 file_hash=file_hash,
-                title=processing_result.get("metadata", {}).get("title", file.filename),
+                title=chat_metadata.get("title", file.filename),
                 content=processing_result["content"],
                 language=processing_result["language"],
-                meta_data=processing_result["metadata"],
+                meta_data=chat_metadata,
                 scope=scope,
                 uploaded_by=current_user.id,
                 processed=True,
@@ -615,24 +755,17 @@ async def upload_document_unified(
             db.commit()
             db.refresh(chat_file)
             document = chat_file  # For consistent return
+            response_metadata = chat_metadata
 
-        # Return success response
-        return {
-            "success": True,
-            "duplicate": False,
-            "document_id": str(document.id),
-            "filename": document.original_filename,
-            "file_type": document.file_type.value if document.file_type else "unknown",
-            "file_size": document.file_size,
-            "language": processing_result["language"],
-            "scope": scope.value,
-            "processing_time": processing_result["processing_time"],
-            "chunks_created": len(processing_result["chunks"]),
-            "embeddings_generated": len(processing_result["embeddings"]) > 0,
-            "content_preview": processing_result["content"][:200] + "..." if len(processing_result["content"]) > 200 else processing_result["content"],
-            "metadata": processing_result["metadata"],
-            "created_at": document.created_at.isoformat()
-        }
+        return prepare_upload_response(
+            document=document,
+            processing_result=processing_result,
+            metadata=response_metadata,
+            scope=scope,
+            current_user=current_user,
+            session_id=session_id,
+        )
+
 
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -641,13 +774,13 @@ async def upload_document_unified(
         # Clean up file on error
         if file_path.exists():
             os.remove(file_path)
-        logger.error(f"📄 Upload processing failed: {e}")
+        logger.error(f"Upload processing failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Processing failed: {str(e)}"
         )
 
-# 🗑️ OLD ENDPOINTS REMOVED - Now using MCP
+# ðŸ—‘ï¸ OLD ENDPOINTS REMOVED - Now using MCP
 # The /api/v1/chat endpoint has been replaced by /api/v1/mcp/message
 # which provides better standardization through Model Context Protocol
 
@@ -756,9 +889,9 @@ async def chat_old_deprecated(
                     "messages": [
                         {
                             "role": "system",
-                            "content": f"Du bist ein hilfreicher KI-Assistent für die Pyramid Computer GmbH. Antworte kurz und präzise auf Deutsch. " +
+                            "content": f"Du bist ein hilfreicher KI-Assistent fÃ¼r die Pyramid Computer GmbH. Antworte kurz und prÃ¤zise auf Deutsch. " +
                                      (f"RAG-Modus ist aktiviert - verwende das bereitgestellte Dokumentenwissen zur Beantwortung. Zitiere dabei die relevanten Quellen." if request.rag_enabled else "RAG-Modus ist deaktiviert - beantworte nur mit deinem allgemeinen Wissen, ohne Dokumentenkontext.") +
-                                     (" Wenn du Informationen aus den Dokumenten verwendest, erwähne die Quelle." if document_context else "")
+                                     (" Wenn du Informationen aus den Dokumenten verwendest, erwÃ¤hne die Quelle." if document_context else "")
                         },
                         {"role": "user", "content": f"{request.content}{document_context}"}
                     ],
@@ -839,7 +972,7 @@ async def search(
             document_id=doc.id,
             filename=doc.filename,
             title=doc.title,
-            excerpt=doc.description[:200] if doc.description else "Keine Beschreibung verfügbar",
+            excerpt=doc.description[:200] if doc.description else "Keine Beschreibung verfÃ¼gbar",
             relevance_score=0.95,  # Mock score
             department=doc.department.value,
             file_type=doc.file_type.value
@@ -1173,11 +1306,72 @@ async def reprocess_document(
 # MCP Server endpoints
 
 # Request model for MCP messages
+class MCPQueryMode(str, Enum):
+    HYBRID = "HYBRID"
+    VECTOR = "VECTOR"
+    KEYWORD = "KEYWORD"
+
+
+class MCPUngatedSearchRequest(BaseModel):
+    query: str
+    mode: MCPQueryMode = MCPQueryMode.HYBRID
+    limit: int = 5
+    offset: int = 0
+    department: Optional[str] = None
+
+
 class MCPMessageRequest(BaseModel):
     messages: List[Dict[str, Any]]
     tools: Optional[List[str]] = None
     session_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
+
+@app.post("/api/v1/mcp/search")
+async def mcp_search(
+    request: MCPUngatedSearchRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Search documents via MCP-compatible response structure."""
+    from app.vector_store import vector_store
+    department_value = request.department or (current_user.primary_department.value if hasattr(current_user.primary_department, 'value') else str(current_user.primary_department))
+
+    limit_for_query = max(request.limit, request.limit + request.offset)
+    start_time = time.time()
+
+    if request.mode == MCPQueryMode.VECTOR:
+        raw_results = await vector_store.semantic_search(
+            query=request.query,
+            db=db,
+            limit=limit_for_query,
+            user_department=department_value
+        )
+    elif request.mode == MCPQueryMode.KEYWORD:
+        raw_results = await vector_store.keyword_search(
+            query=request.query,
+            db=db,
+            limit=limit_for_query,
+            user_department=department_value
+        )
+    else:
+        raw_results = await vector_store.hybrid_search(
+            query=request.query,
+            db=db,
+            limit=limit_for_query,
+            user_department=department_value
+        )
+
+    results = raw_results[request.offset:request.offset + request.limit]
+    took_ms = int((time.time() - start_time) * 1000)
+
+    return {
+        "query": request.query,
+        "mode": request.mode.value,
+        "results": results,
+        "total_results": len(raw_results),
+        "took_ms": took_ms
+    }
+
 
 @app.post("/api/v1/mcp/message")
 async def process_mcp_message(
@@ -1187,13 +1381,17 @@ async def process_mcp_message(
 ):
     """Process MCP protocol message with enhanced functionality"""
     try:
-        from app.mcp_server import MCPServer, ToolType
+        from app.mcp_server import ToolType, get_mcp_server, initialize_mcp_server
 
         # Generate session_id if not provided
         session_id = request.session_id or f"session_{current_user.id}_{datetime.now().timestamp()}"
 
-        # Create MCP server instance
-        mcp_server = MCPServer(db)
+        # Reuse MCP server instance to preserve session context
+        mcp_server = get_mcp_server(db)
+        if not mcp_server:
+            mcp_server = await initialize_mcp_server(db)
+        else:
+            mcp_server.update_session(db)
 
         # Extract context from request
         context = request.context or {}
@@ -1205,6 +1403,7 @@ async def process_mcp_message(
         citations = []
 
         for msg in request.messages:
+            message_payload = dict(msg)
             # Determine which tools to use
             if rag_enabled and request.tools and 'hybrid_search' in request.tools:
                 # First, perform search
@@ -1228,17 +1427,43 @@ async def process_mcp_message(
                     # Add context to message
                     context_text = "\n\n".join([r.get('content', r.get('text', '')) for r in search_result['results'][:3]])
                     enhanced_content = f"Context:\n{context_text}\n\nUser Question: {msg['content']}"
-                    msg['content'] = enhanced_content
+                    message_payload['content'] = enhanced_content
+
+            if uploaded_documents and 'uploaded_documents' not in message_payload:
+                message_payload['uploaded_documents'] = uploaded_documents
 
             # Process message through chat
             response = await mcp_server.process_message(
-                message=msg,
+                message=message_payload,
                 session_id=session_id,
                 user_id=str(current_user.id),
                 department=department_value if 'department_value' in locals() else (current_user.primary_department.value if hasattr(current_user.primary_department, 'value') else str(current_user.primary_department))
             )
 
             all_responses.append(response)
+
+        # Collect manual document citations from MCP context
+        manual_context_citations: List[Dict[str, Any]] = []
+        context_snapshot = getattr(mcp_server, "contexts", {}).get(session_id)
+        if context_snapshot and getattr(context_snapshot, "documents", None):
+            for doc_entry in context_snapshot.documents[-5:]:
+                doc_id = doc_entry.get("id")
+                content = doc_entry.get("content") or ""
+                if not doc_id or not content:
+                    continue
+                manual_context_citations.append({
+                    'document_id': doc_id,
+                    'document_title': doc_entry.get('title', ''),
+                    'snippet': content[:200],
+                    'relevance_score': 1.0
+                })
+
+        final_citations = citations if rag_enabled else []
+        existing_ids = {c.get('document_id') for c in final_citations if c.get('document_id')}
+        for citation in manual_context_citations:
+            if citation['document_id'] not in existing_ids:
+                final_citations.append(citation)
+                existing_ids.add(citation['document_id'])
 
         # Format response to match frontend expectations
         return {
@@ -1249,7 +1474,7 @@ async def process_mcp_message(
                     'content': all_responses[-1].get('content', '') if all_responses else 'Keine Antwort generiert.'
                 }
             ],
-            'citations': citations if rag_enabled else [],
+            'citations': final_citations,
             'metadata': {
                 'session_id': session_id,
                 'rag_enabled': rag_enabled,
@@ -1351,6 +1576,25 @@ async def stream_mcp_chat(
 
             # Stream response from MCP service
             session_id = request.session_id or str(uuid.uuid4())
+
+            # Optionally augment message with RAG context using internal MCPServer tools
+            try:
+                use_rag = context.get("rag_enabled", True) or (request.tools and ("hybrid_search" in request.tools or "document_search" in request.tools))
+                if use_rag:
+                    from app.mcp_server import MCPServer, ToolType
+                    mcp_server = MCPServer(db)
+                    # Perform hybrid search for best context
+                    search_result = await mcp_server.tools[ToolType.HYBRID_SEARCH].execute(
+                        query=message_content,
+                        department=department_value,
+                        limit=5
+                    )
+                    if search_result.get("success") and search_result.get("results"):
+                        context_text = "\n\n".join([r.get("content", r.get("text", r.get("chunk_content", ""))) for r in search_result["results"][:3]])
+                        context["search_results"] = search_result.get("results", [])
+                        message_content = f"Context:\n{context_text}\n\nUser Question: {message_content}"
+            except Exception as e:
+                logger.warning(f"RAG context augmentation failed: {e}")
 
             # Call MCP service streaming endpoint
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -1472,7 +1716,7 @@ async def get_chat_session(
 
     return ChatSessionResponse.from_orm(session)
 
-# 🗑️ OLD UPLOAD ENDPOINT REMOVED
+# ðŸ—‘ï¸ OLD UPLOAD ENDPOINT REMOVED
 # Use /api/v1/documents/upload instead (unified upload system)
 
 @app.delete("/api/v1/chat/cleanup-expired")

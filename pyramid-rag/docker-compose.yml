@@ -86,6 +86,8 @@ services:
         condition: service_healthy
       ollama:
         condition: service_healthy
+      pyramid-mcp:
+        condition: service_healthy
     networks:
       - pyramid-network
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
@@ -181,7 +183,30 @@ services:
     networks:
       - pyramid-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MCP Network Server (HTTP/SSE/WebSocket)
+  pyramid-mcp:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.mcp
+    container_name: pyramid-mcp
+    environment:
+      - MCP_BACKEND_URL=http://backend:8000
+      - MCP_SERVICE_EMAIL=${MCP_SERVICE_EMAIL:-admin@pyramid-computer.de}
+      - MCP_SERVICE_PASSWORD=${MCP_SERVICE_PASSWORD:-admin123}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - pyramid-network
+    ports:
+      - "18001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

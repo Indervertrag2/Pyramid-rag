@@ -1,7 +1,8 @@
 import logging
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func
+from sqlalchemy import and_, or_, func, cast
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models import Document, DocumentChunk, DocumentEmbedding, Department
 from app.embeddings_service import embeddings_service
@@ -47,7 +48,13 @@ class VectorStore:
             if user_department:
                 try:
                     dept_enum = Department(user_department)
-                    base_query = base_query.filter(Document.department == dept_enum)
+                    visibility_json = cast(Document.meta_data, JSONB)["visibility"].astext
+                    base_query = base_query.filter(
+                        or_(
+                            Document.department == dept_enum,
+                            visibility_json == "all"
+                        )
+                    )
                 except ValueError:
                     logger.warning(f"Invalid department: {user_department}")
 
@@ -65,6 +72,10 @@ class VectorStore:
                     similarity = self._cosine_similarity(query_embedding, embedding_obj.embedding)
 
                     if similarity >= similarity_threshold:
+                        visibility = None
+                        if document.meta_data:
+                            visibility = document.meta_data.get("visibility")
+
                         results.append({
                             'chunk_id': str(chunk.id),
                             'document_id': str(document.id),
@@ -74,6 +85,7 @@ class VectorStore:
                             'chunk_index': chunk.chunk_index,
                             'similarity_score': round(similarity, 4),
                             'department': document.department.value if document.department else None,
+                            'visibility': visibility,
                             'file_type': document.file_type.value if document.file_type else None,
                             'created_at': document.created_at.isoformat() if document.created_at else None,
                             'meta_data': chunk.meta_data or {}
@@ -119,7 +131,13 @@ class VectorStore:
             if user_department:
                 try:
                     dept_enum = Department(user_department)
-                    base_query = base_query.filter(Document.department == dept_enum)
+                    visibility_json = cast(Document.meta_data, JSONB)["visibility"].astext
+                    base_query = base_query.filter(
+                        or_(
+                            Document.department == dept_enum,
+                            visibility_json == "all"
+                        )
+                    )
                 except ValueError:
                     logger.warning(f"Invalid department: {user_department}")
 
@@ -138,6 +156,10 @@ class VectorStore:
                 match_count = sum(1 for term in search_terms if term in content_lower)
                 match_score = match_count / len(search_terms)
 
+                visibility = None
+                if document.meta_data:
+                    visibility = document.meta_data.get("visibility")
+
                 results.append({
                     'chunk_id': str(chunk.id),
                     'document_id': str(document.id),
@@ -148,6 +170,7 @@ class VectorStore:
                     'keyword_score': round(match_score, 4),
                     'match_count': match_count,
                     'department': document.department.value if document.department else None,
+                    'visibility': visibility,
                     'file_type': document.file_type.value if document.file_type else None,
                     'created_at': document.created_at.isoformat() if document.created_at else None,
                     'meta_data': chunk.meta_data or {}

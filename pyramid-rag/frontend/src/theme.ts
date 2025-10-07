@@ -3,9 +3,9 @@ import { createTheme } from '@mui/material/styles';
 const theme = createTheme({
   palette: {
     primary: {
-      main: '#003d7a', // Pyramid Blue
-      light: '#0056a6',
-      dark: '#002754',
+      main: '#012169', // New Pyramid Blue
+      light: '#344a8a',
+      dark: '#00003f',
       contrastText: '#ffffff',
     },
     secondary: {
@@ -20,9 +20,9 @@ const theme = createTheme({
       dark: '#c62828',
     },
     warning: {
-      main: '#ff9800',
-      light: '#ffb74d',
-      dark: '#f57c00',
+      main: '#d9027d', // New Pink for temporary chats
+      light: '#e03597',
+      dark: '#a3015e',
     },
     success: {
       main: '#4caf50',
@@ -39,8 +39,8 @@ const theme = createTheme({
       paper: '#ffffff',
     },
     text: {
-      primary: '#1a1a1a',
-      secondary: '#666666',
+      primary: '#2596be', // New "Black"
+      secondary: 'rgba(37, 150, 190, 0.7)', // New "Gray"
     },
   },
   typography: {
@@ -140,7 +140,7 @@ const theme = createTheme({
         root: {
           '& .MuiOutlinedInput-root': {
             '&:hover fieldset': {
-              borderColor: '#003d7a',
+              borderColor: '#012169',
             },
           },
         },

@@ -106,10 +106,17 @@ class DocumentResponse(DocumentBase):
     id: UUID4
     filename: str
     original_filename: str
+    stored_filename: Optional[str] = None
     file_type: FileTypeEnum
     file_size: int
     mime_type: Optional[str] = None
     content: Optional[str] = None
+    content_preview: Optional[str] = None
+    content_length: Optional[int] = None
+    scope: Optional[FileScopeEnum] = None
+    processing_time: Optional[float] = None
+    chunks_created: Optional[int] = None
+    embeddings_generated: Optional[bool] = None
     meta_data: Optional[Dict] = None
     processed: bool
     uploaded_by: UUID4
@@ -130,6 +137,8 @@ class UploadedDocument(BaseModel):
     id: str
     title: str
     content: Optional[str] = None
+    content_preview: Optional[str] = None
+    content_length: Optional[int] = None
 
 class ChatMessageRequest(BaseModel):
     content: str
@@ -170,6 +179,20 @@ class ChatFileResponse(BaseModel):
     processed: bool
     processing_error: Optional[str] = None
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ChatFileDetailResponse(ChatFileResponse):
+    mime_type: Optional[str] = None
+    file_hash: Optional[str] = None
+    content: Optional[str] = None
+    content_preview: Optional[str] = None
+    content_length: Optional[int] = None
+    language: Optional[str] = None
+    meta_data: Optional[Dict[str, Any]] = None
+    updated_at: datetime
 
     class Config:
         from_attributes = True

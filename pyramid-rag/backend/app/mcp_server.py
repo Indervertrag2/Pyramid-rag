@@ -296,6 +296,18 @@ class ChatTool(MCPTool):
                 "rag_enabled": rag_enabled
             }
 
+            manual_docs = []
+            if context.documents:
+                for doc in context.documents[-5:]:
+                    content = (doc.get("content") or "").strip()
+                    if not content:
+                        continue
+                    manual_docs.append({
+                        "id": doc.get("id") or str(uuid.uuid4()),
+                        "title": doc.get("title") or "Dokument",
+                        "content": content[:1000]
+                    })
+
             if rag_enabled:
                 # Step 2: Search - Use hybrid search for better results
                 logger.info("Performing hybrid search for RAG context")
@@ -319,8 +331,20 @@ class ChatTool(MCPTool):
                             "score": result['hybrid_score']
                         })
 
+                manual_citations = []
+                if manual_docs:
+                    for doc in manual_docs:
+                        context_chunks.append(f"{doc['title']}: {doc['content']}")
+                        manual_citations.append({
+                            "resource": f"chat://doc/{doc['id']}",
+                            "document_title": doc['title'],
+                            "chunk_content": doc['content'][:100] + ("..." if len(doc['content']) > 100 else ""),
+                            "score": 1.0
+                        })
+                citations.extend(manual_citations)
+
                 # Step 4: Generate response with RAG context
-                rag_prompt = self._build_rag_prompt(message, context_chunks, context)
+                rag_prompt = self._build_rag_prompt(message, context_chunks, context, manual_docs)
                 response = self.ollama_client.generate_response(
                     query=rag_prompt,
                     temperature=context.temperature
@@ -336,16 +360,26 @@ class ChatTool(MCPTool):
             else:
                 # Direct chat without RAG
                 logger.info("Generating direct response without RAG")
-                basic_prompt = self._build_prompt(message, context)
+                basic_prompt = self._build_prompt(message, context, manual_docs)
                 response = self.ollama_client.generate_response(
                     query=basic_prompt,
                     temperature=context.temperature
                 )
 
+                manual_citations = []
+                if manual_docs:
+                    for doc in manual_docs:
+                        manual_citations.append({
+                            "resource": f"chat://doc/{doc['id']}",
+                            "document_title": doc['title'],
+                            "chunk_content": doc['content'][:100] + ("..." if len(doc['content']) > 100 else ""),
+                            "score": 1.0
+                        })
+
                 response_data.update({
                     "response": response,
-                    "citations": [],
-                    "context_chunks_used": 0
+                    "citations": manual_citations,
+                    "context_chunks_used": len(manual_docs)
                 })
 
             logger.info(f"Ollama response generated: {len(response_data.get('response', ''))} chars")
@@ -363,7 +397,7 @@ class ChatTool(MCPTool):
                               "Personal", "Finanzen"]
         return department in allowed_departments
 
-    def _build_rag_prompt(self, message: str, context_chunks: List[str], context: MCPContext) -> str:
+    def _build_rag_prompt(self, message: str, context_chunks: List[str], context: MCPContext, uploaded_docs: Optional[List[Dict[str, str]]] = None) -> str:
         """Build prompt with RAG context from search results"""
         prompt_parts = []
 
@@ -394,6 +428,11 @@ class ChatTool(MCPTool):
             for i, chunk in enumerate(context_chunks[:3], 1):  # Limit to 3 most relevant chunks
                 prompt_parts.append(f"Document {i}: {chunk}\n")
 
+        if uploaded_docs:
+            prompt_parts.append("CHAT-KONTEXT-DOKUMENTE:")
+            for doc in uploaded_docs[:3]:
+                prompt_parts.append(f"{doc['title']}: {doc['content']}\n")
+
         # Add conversation history
         prompt_parts.append("CONVERSATION HISTORY:")
         for msg in context.messages[-3:]:  # Last 3 messages
@@ -409,7 +448,7 @@ class ChatTool(MCPTool):
 
         return "\n".join(prompt_parts)
 
-    def _build_prompt(self, message: str, context: MCPContext) -> str:
+    def _build_prompt(self, message: str, context: MCPContext, uploaded_docs: Optional[List[Dict[str, str]]] = None) -> str:
         """Build prompt without RAG context"""
         prompt_parts = []
 
@@ -420,6 +459,12 @@ class ChatTool(MCPTool):
             "Antworte freundlich und hilfreich auf Deutsch. "
             "Du hast KEINEN Zugriff auf Firmendokumente - antworte nur mit deinem allgemeinen Wissen."
         )
+
+        # Add chat-specific documents if available
+        if uploaded_docs:
+            prompt_parts.append("Dokumente aus dem aktuellen Chat:")
+            for doc in uploaded_docs[:3]:
+                prompt_parts.append(f"{doc['title']}: {doc['content']}")
 
         # Add recent context
         for msg in context.messages[-5:]:  # Last 5 messages
@@ -449,6 +494,12 @@ class MCPServer:
         }
         self.contexts: Dict[str, MCPContext] = {}
 
+    def update_session(self, db_session: Session):
+        """Refresh database session for server and tools."""
+        self.db = db_session
+        for tool in self.tools.values():
+            tool.db = db_session
+
     async def process_message(self,
                              message: Dict[str, Any],
                              session_id: str,
@@ -467,6 +518,30 @@ class MCPServer:
                 documents=[]
             )
             self.contexts[session_id] = context
+
+        # Persist uploaded documents (if provided) into context
+        uploaded_docs = message.get("uploaded_documents") or []
+        if uploaded_docs:
+            existing_ids = {doc.get("id") for doc in context.documents}
+            for doc in uploaded_docs:
+                content = doc.get("content")
+                if not content:
+                    continue
+                doc_id = doc.get("id") or doc.get("document_id") or str(uuid.uuid4())
+                if doc_id in existing_ids:
+                    continue
+                sanitized_content = content.replace("\x00", " ")
+                context.documents.append({
+                    "id": doc_id,
+                    "title": doc.get("title") or doc.get("filename") or "Dokument",
+                    "content": sanitized_content,
+                    "scope": doc.get("scope", "CHAT"),
+                    "visibility": doc.get("visibility", "chat")
+                })
+                existing_ids.add(doc_id)
+
+            if len(context.documents) > 5:
+                context.documents = context.documents[-5:]
 
         # Parse message
         mcp_message = MCPMessage(

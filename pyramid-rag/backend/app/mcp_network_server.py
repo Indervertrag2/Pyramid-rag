@@ -5,10 +5,14 @@ Runs as a separate Docker service and communicates over network
 """
 
 import asyncio
+import base64
 import json
 import logging
+import os
+import re
+import unicodedata
 from typing import Dict, Any, Optional, AsyncGenerator, List
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 from dataclasses import dataclass, asdict
 from enum import Enum
@@ -24,6 +28,17 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_text(value: str) -> str:
+    if not value:
+        return ""
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = normalized.replace("\x00", " ")
+    normalized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
 
 app = FastAPI(title="MCP Server", version="1.0.0")
 
@@ -54,6 +69,12 @@ class MCPServer:
         self.tools = {}
         self.resources = {}
         self.sessions = {}
+        self.backend_url = os.getenv("MCP_BACKEND_URL", "http://pyramid-backend:8000")
+        self.service_email = os.getenv("MCP_SERVICE_EMAIL")
+        self.service_password = os.getenv("MCP_SERVICE_PASSWORD")
+        self.service_token: Optional[str] = None
+        self.token_expiry: datetime = datetime.utcnow()
+        self.token_lock = asyncio.Lock()
         self._setup_tools()
 
     def _setup_tools(self):
@@ -170,6 +191,41 @@ class MCPServer:
                 if context.get("rag_enabled", False):
                     system_prompt += "\nVerwende die verfügbaren Dokumente nur wenn sie zur Frage passen."
 
+            uploaded_docs = context.get("uploaded_documents") or []
+            search_results = context.get("search_results") or []
+            document_summaries = []
+
+            for doc in uploaded_docs:
+                content = _sanitize_text(doc.get("content") or doc.get("content_preview") or "")
+                document_summaries.append({
+                    "source": "chat",
+                    "scope": doc.get("scope", "CHAT"),
+                    "document_id": doc.get("document_id") or doc.get("id"),
+                    "title": doc.get("title") or doc.get("filename") or "Dokument",
+                    "content_preview": content[:500],
+                    "mime_type": doc.get("mime_type"),
+                    "uploaded_by": doc.get("uploaded_by"),
+                    "created_at": doc.get("created_at"),
+                    "updated_at": doc.get("updated_at")
+                })
+
+            for result in search_results:
+                snippet = result.get("chunk_content") or result.get("content") or result.get("text") or result.get("excerpt") or ""
+                snippet = _sanitize_text(snippet)[:500]
+                document_summaries.append({
+                    "source": "knowledge_base",
+                    "scope": result.get("scope", "GLOBAL"),
+                    "document_id": result.get("document_id"),
+                    "chunk_id": result.get("chunk_id"),
+                    "title": result.get("document_title") or result.get("title") or "Dokument",
+                    "content_preview": snippet,
+                    "score": result.get("hybrid_score") or result.get("score")
+                })
+
+            self.sessions[session_id] = {
+                "documents": document_summaries,
+            }
+
             # Connect to Ollama with streaming
             async with httpx.AsyncClient(timeout=60.0) as client:
                 async with client.stream(
@@ -199,6 +255,67 @@ class MCPServer:
             logger.error(f"Streaming error: {e}")
             yield f"Error: {e}"
 
+    async def _ensure_service_token(self) -> Optional[str]:
+        """Ensure we have a backend service token for API calls."""
+        if not self.service_email or not self.service_password:
+            return None
+
+        async with self.token_lock:
+            now = datetime.utcnow()
+            if self.service_token and now < self.token_expiry:
+                return self.service_token
+
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(
+                        f"{self.backend_url}/api/v1/auth/login",
+                        json={
+                            "email": self.service_email,
+                            "password": self.service_password
+                        }
+                    )
+
+                if response.status_code != 200:
+                    logger.error(
+                        "Service login failed (%s): %s",
+                        response.status_code,
+                        response.text
+                    )
+                    return None
+
+                data = response.json()
+                self.service_token = data.get("access_token")
+                self.token_expiry = now + timedelta(minutes=25)
+                return self.service_token
+
+            except Exception as exc:
+                logger.error(f"Service token error: {exc}")
+                return None
+
+    async def _call_backend_search(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Delegate search to backend API with service token."""
+        token = await self._ensure_service_token()
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            response = await client.post(
+                f"{self.backend_url}/api/v1/mcp/search",
+                json=payload,
+                headers=headers
+            )
+
+        if response.status_code != 200:
+            logger.error(
+                "Backend search failed (%s): %s",
+                response.status_code,
+                response.text
+            )
+            raise HTTPException(status_code=500, detail="Backend search failed")
+
+        return response.json()
+
     # Tool implementations
     async def _tool_chat(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Chat tool for non-streaming responses"""
@@ -217,48 +334,135 @@ class MCPServer:
         }
 
     async def _tool_search(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Hybrid search tool"""
+        """Hybrid search tool via backend."""
         query = params.get("query", "")
         limit = params.get("limit", 5)
+        department = params.get("department")
 
-        # TODO: Implement actual search
-        return {
-            "results": [],
+        if not query:
+            raise HTTPException(status_code=400, detail="Missing query for hybrid search")
+
+        payload = {
             "query": query,
-            "count": 0
+            "mode": "HYBRID",
+            "limit": limit,
+            "department": department
+        }
+
+        result = await self._call_backend_search(payload)
+        return {
+            "results": result.get("results", []),
+            "query": result.get("query", query),
+            "count": result.get("total_results", len(result.get("results", []))),
+            "mode": result.get("mode", "HYBRID")
         }
 
     async def _tool_vector_search(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Vector search tool"""
+        """Vector search tool via backend."""
         query = params.get("query", "")
         limit = params.get("limit", 5)
+        department = params.get("department")
 
-        # TODO: Implement actual vector search
-        return {
-            "results": [],
+        if not query:
+            raise HTTPException(status_code=400, detail="Missing query for vector search")
+
+        payload = {
             "query": query,
-            "count": 0
+            "mode": "VECTOR",
+            "limit": limit,
+            "department": department
+        }
+
+        result = await self._call_backend_search(payload)
+        return {
+            "results": result.get("results", []),
+            "query": result.get("query", query),
+            "count": result.get("total_results", len(result.get("results", []))),
+            "mode": result.get("mode", "VECTOR")
         }
 
     async def _tool_keyword_search(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Keyword search tool"""
+        """Keyword search tool via backend."""
         query = params.get("query", "")
         limit = params.get("limit", 5)
+        department = params.get("department")
 
-        # TODO: Implement actual keyword search
-        return {
-            "results": [],
+        if not query:
+            raise HTTPException(status_code=400, detail="Missing query for keyword search")
+
+        payload = {
             "query": query,
-            "count": 0
+            "mode": "KEYWORD",
+            "limit": limit,
+            "department": department
+        }
+
+        result = await self._call_backend_search(payload)
+        return {
+            "results": result.get("results", []),
+            "query": result.get("query", query),
+            "count": result.get("total_results", len(result.get("results", []))),
+            "mode": result.get("mode", "KEYWORD")
         }
 
     async def _tool_document_upload(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Document upload tool"""
-        # TODO: Implement document handling
-        return {
-            "status": "success",
-            "document_id": str(uuid.uuid4())
+        """Document upload tool bridging to backend pipeline."""
+        file_name = params.get("file_name") or params.get("filename")
+        file_content_b64 = params.get("file_content") or params.get("content_base64")
+        if not file_name or not file_content_b64:
+            raise HTTPException(status_code=400, detail="file_name and file_content are required")
+
+        scope = (params.get("scope") or "GLOBAL").upper()
+        visibility = (params.get("visibility") or "department").lower()
+        session_id = params.get("session_id")
+        content_type = params.get("content_type") or "application/octet-stream"
+
+        if scope not in {"GLOBAL", "CHAT"}:
+            raise HTTPException(status_code=400, detail="scope must be GLOBAL or CHAT")
+        if scope == "CHAT" and not session_id:
+            raise HTTPException(status_code=400, detail="session_id required when scope is CHAT")
+
+        try:
+            file_bytes = base64.b64decode(file_content_b64)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid base64 content: {exc}")
+
+        token = await self._ensure_service_token()
+        headers: Dict[str, str] = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        form_data = {
+            "scope": scope,
+            "visibility": visibility,
         }
+        if session_id:
+            form_data["session_id"] = session_id
+
+        files = {
+            "file": (file_name, file_bytes, content_type)
+        }
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{self.backend_url}/api/v1/documents/upload",
+                data=form_data,
+                files=files,
+                headers=headers
+            )
+
+        if response.status_code not in (200, 201):
+            logger.error(
+                "Backend document upload failed (%s): %s",
+                response.status_code,
+                response.text
+            )
+            raise HTTPException(status_code=500, detail="Backend document upload failed")
+
+        result = response.json()
+        result.setdefault("scope", scope)
+        result.setdefault("visibility", visibility)
+        return result
 
     async def _tool_get_context(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Get conversation context"""
@@ -304,8 +508,10 @@ async def mcp_stream(request: dict):
                 # Send as SSE format
                 yield f"event: message\ndata: {json.dumps({'chunk': chunk})}\n\n"
 
+            session_snapshot = mcp_server.sessions.get(session_id, {})
+            documents = session_snapshot.get('documents', [])
             # Send completion event
-            yield f"event: done\ndata: {json.dumps({'status': 'complete', 'session_id': session_id})}\n\n"
+            yield f"event: done\ndata: {json.dumps({'status': 'complete', 'session_id': session_id, 'documents': documents})}\n\n"
         except Exception as e:
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
