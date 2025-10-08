@@ -1,0 +1,41 @@
+Erweiterte Indexierung:
+
+Die Indexierungsanforderung muss von "nur Text" auf "Struktur-Bewussten (Structural) Text" erweitert werden.
+
+Die Async-Pipeline (Extraktion/OCR, Chunking) muss so angepasst werden, dass sie Dokumente nicht nur als Text-Blob liest, sondern deren logische Hierarchie erfasst und in eine LLM-freundliche Textdarstellung überführt, bevor das Chunking erfolgt.
+
+3. Spezifische Implementierungsdetails für den Worker
+
+Der Extraktions- und Chunking-Worker muss die folgenden Elemente erkennen und korrekt verarbeiten:
+
+A. Tabellenstruktur
+
+    Erkennung: Identifiziere Tabellen (in PDFs, Office-Dokumenten).
+
+    Transformation: Wandle jede Tabellenzeile in ein eigenständiges Text-Chunk um, wobei die Spaltenüberschriften oder ein vorbereitender Kontext vorangestellt werden.
+
+Vorher (reiner Text)	Nachher (Structure-Aware Chunk)
+15.000 € Freiburg HR-Abteilung …	[Tabelle: Gehälter, Spalten: Betrag, Ort, Abteilung] Betrag: 15.000 € Ort: Freiburg Abteilung: HR-Abteilung
+(Unzusammenhängend)	(Semantisch reichhaltig und vollständig)
+
+B. Listen und Aufzählungen
+
+    Problem: Einzelne Listenpunkte dürfen nicht von der dazugehörigen Überschrift oder dem Kontext getrennt werden.
+
+    Anforderung: Führe die Listenüberschrift oder den Einleitungssatz mit den nachfolgenden Listenpunkten im selben Chunk zusammen, um den Kontext zu erhalten. Bei langen Listen muss das Chunking sicherstellen, dass nicht ein Listenpunkt ohne seine Hauptthemen-Überschrift eingebettet wird.
+
+C. Überschriften und Hierarchie
+
+    Anforderung: Bei jedem Chunk, das aus einem Abschnitt unter einer Überschrift generiert wird, muss der Text der Überschrift (H1, H2, H3) dem Chunk-Text vorangestellt werden.
+
+    Beispiel: Wenn ein Chunk über "Urlaubstage" generiert wird, muss der Chunk mit "HR-Richtlinie - Abschnitt 3.2: Urlaubsanspruch" beginnen, selbst wenn diese Überschrift mehrere Seiten zurückliegt.
+
+4. Technischer Nutzen und Begründung
+
+Die Implementierung des Structure-Aware Chunking ist notwendig, um:
+
+    RAG-Qualität steigern: Erhöht die Dichte und Relevanz der Embeddings, da der Kontext im Chunk erhalten bleibt. Das Retrieval ist somit präziser.
+
+    Latenz reduzieren: Bessere Embeddings erlauben es, mit weniger Top-K-Resultaten aus dem Vektorstore (PostgreSQL + pgvector) auszukommen und das Kontextfenster des LLM kleiner zu halten. Weniger irrelevante Chunks reduzieren die Token-Verarbeitung, was die Einhaltung des Latenzziels Chat (RAG) < 3 s p95 erleichtert.
+
+    Abdeckung komplexer Dokumente: Stellt sicher, dass auch kritische Unternehmensdokumente (Berichte, Protokolle, Spezifikationen), die oft Tabellen und Listen enthalten, zuverlässig befragbar sind ("Best-Effort-Parser" reicht hier nicht aus).

@@ -1,0 +1,42 @@
+1. Lösung: Semantische Deduplizierung vs. Korrektur (Priorisierung des Overwrites)
+
+Um zu verhindern, dass eine wichtige Korrektur (z.B. eine geänderte Zahl) abgelehnt wird, muss der Upload-Workflow erweitert werden, um den Dateinamen als primären Indikator für einen Überschreibungsversuch zu nutzen:
+
+Überarbeiteter Upload-Workflow:
+
+    Dateiname-Check (Overwrite-Intent): Beim Upload prüft das System zuerst, ob eine Datei mit dem identischen Dateinamen bereits vom selben Nutzer (owner_id) existiert.
+
+    Overwrite-Logik: Wenn eine Übereinstimmung gefunden wird, wird der Upload automatisch als Korrektur und Überschreibungsversuch interpretiert.
+
+        Die semantische Deduplizierung wird ignoriert.
+
+        Das Backend führt die bereits geforderte Versioning durch (Backup der alten Datei, Löschung der alten Chunks/Embeddings).
+
+        Die neue Datei mit der korrigierten Zahl wird akzeptiert und neu indiziert.
+
+    Semantische Deduplizierung (Nur als Guardrail): Die semantische Prüfung wird nur noch als zweiter Guardrail verwendet, um zu verhindern, dass versehentlich fast identische Dateien unter einem neuen, anderen Namen hochgeladen werden.
+
+Ergebnis: Die Korrektur (Upload mit gleichem Namen) wird immer akzeptiert, wodurch die Datenkonsistenz garantiert wird.
+
+2. Weitere Features und Anpassungen
+
+Basierend auf den Anforderungen nach zeitloser Auffindbarkeit, automatischer Metadaten-Zuweisung und tiefen Integrationen (SharePoint/ERP) schlage ich folgende Ergänzungen vor:
+
+A. RAG-Qualität und Timeless RAG
+
+Feature	Beschreibung	Nutzen
+Multi-Hop Retrieval (Tiefensuche)	Die MCP-Suche holt nicht nur die relevantesten Chunks, sondern automatisch auch die direkt benachbarten Chunks (+1 und -1 in der Reihenfolge des Dokuments).	Das LLM erhält mehr lokalen Kontext und kann komplexe, zeitlose Dokumente, die stark strukturiert sind (Listen, Tabellen), besser interpretieren.
+"Context-Update"-Tagging	Die automatische LLM-Metadaten-Pipeline (Celery Worker) erkennt Sätze wie "(Dieses Dokument ersetzt Version 2.0)". Sie setzt daraufhin automatisch den Tag supersedes: [Alter Dokumentenname/ID] in das neue Dokument.	Das System behält das alte Dokument bei (zeitlose Auffindbarkeit), aber wenn beide Dokumente gefunden werden, kann der LLM-Prompt das neuere (mit supersedes-Tag) priorisieren, was die Korrektheit der Antwort sicherstellt.
+
+B. Automatisierung der Metadaten & File-System-UX
+
+Feature	Beschreibung	Nutzen
+Automatische Pfad- und Kategorie-Generierung	Der LLM-Metadaten-Worker wird angewiesen, zusätzlich zu Tags und Beschreibung eine logische Dateisystem-Kategorie (category_path) zu generieren (z.B. HR/Richtlinien/Gehalt).	Ermöglicht die File-System-UI-Ansicht im Dokumentenportal, die Sie wünschen. Die Ordnerstruktur wird von der KI erstellt und nicht manuell gepflegt.
+LLM-basierte Index-Validierung	Nach der Indizierung generiert das LLM synthetische Fragen zu den hochgeladenen Dokumenten und führt einen Selbsttest durch, ob das RAG-System die Antworten aus den eigenen Chunks korrekt findet.	Sichert die automatische Qualität. Schlägt der Test fehl, liegt ein Problem im Chunking oder in den Embeddings vor, und das Dokument wird für den Admin als fehlerhaft markiert, bevor es in die Suche geht.
+
+C. Integration und On-Premise-Stabilität
+
+Feature	Beschreibung	Nutzen
+MCP-Server für ERP- & SharePoint-Konnektoren	Aufbau dedizierter, isolierter MCP-Server (mcp-erp-live, mcp-sharepoint-sync), die nur für Live-Abfragen und die synchrone Datenanbindung zuständig sind.	Keine Indizierung veralteter ERP-Daten. Das LLM kann über ein Tool im MCP-Protokoll Echtzeitdaten aus den Fremdsystemen abfragen (z.B. "Wie ist der Lagerbestand von Artikel X?"), wodurch die RAG-Antworten mit Live-Fakten angereichert werden.
+GPU-Queue-Management (Ollama)	Implementierung einer feingranularen Warteschlange im FastAPI-Backend für Ollama-Aufrufe.	Erhöht die Stabilität im On-Premise-Betrieb (10 gleichzeitige Nutzer), indem die GPU-Ressourcen nicht überlastet werden, selbst wenn das automatische LLM-Routing einmal fehlschlägt.
+Robuster Celery Task Resume	Der Celery-Worker muss so konfiguriert werden, dass er fehlschlagende oder abgebrochene Tasks (z.B. Reindex-Lauf während des nächtlichen Shutdowns) beim Neustart automatisch in den Status RETRY oder PENDING setzt.	Wichtig für die Ausfallsicherheit: Verhindert den Verlust von Indizierungsfortschritten und garantiert, dass große Aufgaben wie ein kompletter Reindex (geplant z.B. 21:00-05:00 Uhr) zuverlässig abgeschlossen werden.
