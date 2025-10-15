@@ -126,7 +126,7 @@ class DocumentChunk(Base):
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     content_length = Column(Integer)
-    embedding = Column(Vector(768))  # 768-dimensional embeddings (paraphrase-multilingual-mpnet-base-v2)
+    embedding = Column(Vector(768))  # 768-dimensional embeddings (paraphrase-multilingual-mpnet-base-v2) - UPDATED
     meta_data = Column(JSON)  # Changed from 'metadata' to avoid SQLAlchemy conflict
     token_count = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -141,7 +141,7 @@ class DocumentEmbedding(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id = Column(UUID(as_uuid=True), ForeignKey('documents.id'), nullable=False, index=True)
     chunk_id = Column(UUID(as_uuid=True), ForeignKey('document_chunks.id'), nullable=False, index=True)
-    embedding = Column(Vector(768))  # 768-dimensional embeddings (paraphrase-multilingual-mpnet-base-v2)
+    embedding = Column(Vector(768))  # 768-dimensional embeddings (paraphrase-multilingual-mpnet-base-v2) - UPDATED
     model_name = Column(String, default="paraphrase-multilingual-mpnet-base-v2")
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -244,7 +244,7 @@ class ChatFileEmbedding(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     chat_file_id = Column(UUID(as_uuid=True), ForeignKey('chat_files.id'), nullable=False, index=True)
     chunk_id = Column(UUID(as_uuid=True), ForeignKey('chat_file_chunks.id'), nullable=False, index=True)
-    embedding = Column(Vector(768))  # 768-dimensional embeddings (paraphrase-multilingual-mpnet-base-v2)
+    embedding = Column(Vector(768))  # 768-dimensional embeddings (paraphrase-multilingual-mpnet-base-v2) - UPDATED
     model_name = Column(String, default="paraphrase-multilingual-mpnet-base-v2")
     created_at = Column(DateTime, default=datetime.utcnow)
 

@@ -21,6 +21,17 @@ class SearchRequest(BaseModel):
     min_score: float = 0.5
 
 
+class ContextSearchRequest(BaseModel):
+    """Request for context-aware search (returns chunks with surrounding context)."""
+    query: str
+    mode: SearchMode = SearchMode.HYBRID
+    scope: Optional[DocumentScope] = None
+    department: Optional[str] = None
+    limit: int = 10
+    context_window: int = 2  # Number of chunks before/after to include
+    min_score: float = 0.5
+
+
 class SearchResultItem(BaseModel):
     document_id: str
     title: str
@@ -114,3 +125,50 @@ async def find_similar_documents(
         "document_id": document_id,
         "similar_documents": similar_docs
     }
+
+
+@router.post("/context")
+async def context_search(
+    search_request: ContextSearchRequest,
+    db: AsyncSession = Depends(get_async_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Context-aware search: Returns matching chunks WITH surrounding context.
+
+    This is CRITICAL for high-quality RAG! Instead of returning isolated chunks,
+    this endpoint returns each matching chunk plus N chunks before/after it,
+    providing the LLM with more complete context.
+
+    Example:
+    - Regular search: Returns only the matching chunk (500 words)
+    - Context search (window=2): Returns matching chunk + 2 before + 2 after (2500 words)
+
+    This dramatically improves LLM response quality, especially for:
+    - Technical documentation (needs surrounding context)
+    - Legal documents (context matters)
+    - Multi-step instructions (need previous/next steps)
+    - Tables and figures (need surrounding explanations)
+    """
+
+    search_service = SearchService()
+
+    import time
+    start_time = time.time()
+
+    context_results = await search_service.context_search(
+        db=db,
+        query=search_request.query,
+        user=current_user,
+        mode=search_request.mode,
+        scope=search_request.scope,
+        department=search_request.department,
+        limit=search_request.limit,
+        context_window=search_request.context_window,
+        min_score=search_request.min_score
+    )
+
+    processing_time = time.time() - start_time
+    context_results["processing_time"] = processing_time
+
+    return context_results

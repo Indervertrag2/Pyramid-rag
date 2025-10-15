@@ -84,18 +84,17 @@ class DocumentProcessor:
 
         # Initialize embedding model if available
         self.embedding_model = None
-        self.embedding_model_name = os.getenv('EMBEDDING_MODEL', 'paraphrase-multilingual-mpnet-base-v2')
+        # ✅ Upgraded to BGE-M3 (1024 dimensions, best multilingual performance)
+        self.embedding_model_name = os.getenv('EMBEDDING_MODEL', 'BAAI/bge-m3')
         preferred_device = os.getenv('EMBEDDING_DEVICE')
         if preferred_device:
             self.embedding_device = preferred_device
-        elif HAS_TORCH:
+        else:
             try:
                 import torch  # type: ignore
                 self.embedding_device = 'cuda' if torch.cuda.is_available() else 'cpu'
             except Exception:
                 self.embedding_device = 'cpu'
-        else:
-            self.embedding_device = 'cpu'
 
         try:
             self.chunk_size_words = int(os.getenv('DOC_CHUNK_SIZE_WORDS', os.getenv('EMBEDDING_CHUNK_SIZE', '512')))
@@ -109,8 +108,16 @@ class DocumentProcessor:
 
         if HAS_EMBEDDINGS:
             try:
-                self.embedding_model = SentenceTransformer(self.embedding_model_name, device=self.embedding_device)
-                logger.info('Embedding model loaded: %s on %s', self.embedding_model_name, self.embedding_device)
+                logger.info('Loading embedding model: %s (this may take a moment for BGE-M3)...', self.embedding_model_name)
+                self.embedding_model = SentenceTransformer(
+                    self.embedding_model_name,
+                    device=self.embedding_device,
+                    trust_remote_code=True  # Required for BGE-M3
+                )
+                logger.info('✅ Embedding model loaded: %s on %s (dimensions: %d)',
+                           self.embedding_model_name,
+                           self.embedding_device,
+                           self.embedding_model.get_sentence_embedding_dimension())
             except Exception as e:
                 logger.warning('Could not load embedding model %s: %s', self.embedding_model_name, e)
 

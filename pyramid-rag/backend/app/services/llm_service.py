@@ -54,7 +54,9 @@ class LLMService:
     ) -> str:
         """Generate response from LLM."""
         temperature = temperature or float(os.getenv('TEMPERATURE', '0.7'))
-        max_tokens = max_tokens or int(os.getenv('MAX_TOKENS', '2048'))
+        # Remove max_tokens limitation - let the model decide when to stop naturally
+        # For 70B models, use very high limit or omit entirely
+        max_tokens = max_tokens or int(os.getenv('MAX_TOKENS', '32768'))  # Increased for 70B models
 
         # Prepare the full prompt
         full_prompt = self._prepare_prompt(prompt, context)
@@ -63,9 +65,12 @@ class LLMService:
             "model": self.model,
             "prompt": full_prompt,
             "temperature": temperature,
-            "num_predict": max_tokens,
             "stream": stream
         }
+
+        # Only add num_predict if explicitly set (don't limit by default)
+        if max_tokens and max_tokens < 32768:
+            payload["num_predict"] = max_tokens
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -93,7 +98,8 @@ class LLMService:
     ) -> AsyncGenerator[str, None]:
         """Generate streaming response from LLM."""
         temperature = temperature or float(os.getenv('TEMPERATURE', '0.7'))
-        max_tokens = max_tokens or int(os.getenv('MAX_TOKENS', '2048'))
+        # Remove max_tokens limitation for streaming as well
+        max_tokens = max_tokens or int(os.getenv('MAX_TOKENS', '32768'))  # Increased for 70B models
 
         full_prompt = self._prepare_prompt(prompt, context)
 
@@ -101,9 +107,12 @@ class LLMService:
             "model": self.model,
             "prompt": full_prompt,
             "temperature": temperature,
-            "num_predict": max_tokens,
             "stream": True
         }
+
+        # Only add num_predict if explicitly set (don't limit by default)
+        if max_tokens and max_tokens < 32768:
+            payload["num_predict"] = max_tokens
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -215,27 +224,27 @@ class LLMService:
         """Prepare the full prompt with context and instructions."""
 
         if context:
-            # RAG prompt template
-            full_prompt = f"""Sie sind ein hilfreicher KI-Assistent für die Firma Pyramid Computer GmbH.
-Sie haben Zugriff auf interne Dokumente und sollen basierend auf diesen Informationen antworten.
+            # RAG prompt template - Model-agnostic, optimized for 70B+ models
+            full_prompt = f"""Sie sind ein KI-Assistent für die Pyramid Computer GmbH mit Zugriff auf interne Firmendokumente.
 
-KONTEXT AUS DOKUMENTEN:
+RELEVANTE DOKUMENTE:
 {context}
 
-ANWEISUNG:
-Beantworten Sie die folgende Frage basierend auf dem obigen Kontext.
-Wenn die Antwort nicht im Kontext gefunden werden kann, sagen Sie das deutlich.
-Geben Sie immer an, aus welchem Dokument Ihre Information stammt.
-Antworten Sie auf Deutsch, es sei denn, die Frage ist auf Englisch.
+AUFGABE:
+Beantworten Sie die folgende Frage präzise und fundiert basierend auf den obigen Dokumenten.
+- Nennen Sie die Quelle Ihrer Informationen (z.B. "laut Dokument 1...")
+- Falls die Dokumente keine Antwort enthalten, geben Sie dies klar an
+- Antworten Sie auf Deutsch, außer die Frage ist auf Englisch
+- Seien Sie präzise und vermeiden Sie Spekulationen
 
 FRAGE: {prompt}
 
 ANTWORT:"""
         else:
             # Standard prompt without RAG
-            full_prompt = f"""Sie sind ein hilfreicher KI-Assistent für die Firma Pyramid Computer GmbH.
-Beantworten Sie die folgende Frage basierend auf Ihrem allgemeinen Wissen.
-Antworten Sie auf Deutsch, es sei denn, die Frage ist auf Englisch.
+            full_prompt = f"""Sie sind ein KI-Assistent für die Pyramid Computer GmbH.
+Beantworten Sie die folgende Frage basierend auf Ihrem Wissen.
+Antworten Sie auf Deutsch, außer die Frage ist auf Englisch.
 
 FRAGE: {prompt}
 

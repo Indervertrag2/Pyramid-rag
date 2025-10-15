@@ -16,7 +16,7 @@ The Pyramid RAG Platform is fully operational with all critical backend issues r
 ### Previously Fixed Issues (Still Working)
 1. **Database Health**: Fixed with proper `text()` wrapper for SQL queries
 2. **Import Paths**: All migrated from `app.core.*` to `app.*`
-3. **Authentication**: Working with admin@pyramid-computer.de / admin123
+3. **Authentication**: Working with admin@pyramid-computer.de / PyramidAdmin2024!
 4. **Environment Variables**: All configuration uses env vars instead of centralized config
 
 ## System Architecture
@@ -70,7 +70,7 @@ pyramid-redis      - Running on port 6379
 ```
 
 ## Authentication & Access
-- **Admin Login**: admin@pyramid-computer.de / admin123
+- **Admin Login**: admin@pyramid-computer.de / PyramidAdmin2024!
 - **JWT Tokens**: 6-month expiration (259200 minutes)
 - **RBAC**: Basic admin role checking implemented
 - **Department**: MANAGEMENT for admin user
@@ -160,7 +160,7 @@ curl http://localhost:18000/health
 # Login
 curl -X POST http://localhost:18000/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@pyramid-computer.de","password":"admin123"}'
+  -d '{"email":"admin@pyramid-computer.de","password":"PyramidAdmin2024!"}'
 
 # Chat (requires token)
 curl -X POST http://localhost:18000/api/v1/chat \

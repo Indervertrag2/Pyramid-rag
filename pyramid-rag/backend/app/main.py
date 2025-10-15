@@ -28,12 +28,16 @@ logger.info("Configuring CORS middleware...")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "http://localhost",
+        "http://localhost:80",
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:3002",
         "http://localhost:4000",
         "http://localhost:8080",
-        "http://localhost:18000"
+        "http://localhost:18000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:80"
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -101,6 +105,21 @@ logger.info("✓ All routers registered")
 logger.info("=" * 80)
 logger.info("PYRAMID RAG PLATFORM - READY TO ACCEPT CONNECTIONS")
 logger.info("=" * 80)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database and create admin user on startup."""
+    from app.utils.startup import initialize_database, create_admin_user
+
+    logger.info("Running startup initialization...")
+    try:
+        await initialize_database()
+        await create_admin_user()
+        logger.info("Startup initialization completed successfully")
+    except Exception as e:
+        logger.error(f"Startup initialization failed: {e}")
+        # Don't raise - allow app to start even if initialization has issues
 
 
 if __name__ == "__main__":

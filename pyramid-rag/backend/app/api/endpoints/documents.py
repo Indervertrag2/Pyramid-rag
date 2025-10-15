@@ -13,7 +13,7 @@ import logging
 
 from app.database import get_db
 from app.models import (
-    User, Document, DocumentChunk, DocumentEmbedding,
+    User, Document, DocumentChunk, DocumentEmbedding,  # Keep DocumentEmbedding for safety
     Department, FileType, ChatFile, FileScope
 )
 from app.schemas import (
@@ -319,19 +319,24 @@ async def upload_document_unified(
             db.refresh(document)
 
             chunks = processing_result.get("chunks") or []
+            embeddings = processing_result.get("embeddings") or []
             chunk_records: List[DocumentChunk] = []
+
             if chunks:
-                for i, chunk_info in enumerate(chunks):
+                # Populate chunks with embeddings (for fast search)
+                for i, (chunk_info, embedding_vector) in enumerate(zip(chunks, embeddings if embeddings else [None] * len(chunks))):
                     chunk = DocumentChunk(
                         id=uuid.uuid4(),
                         document_id=document.id,
                         chunk_index=i,
                         content=chunk_info["content"],
                         content_length=chunk_info["character_count"],
+                        embedding=embedding_vector,  # ✅ Store in chunk for fast search
                         meta_data={
                             "word_count": chunk_info["word_count"],
                             "start_word": chunk_info.get("start_word"),
                             "end_word": chunk_info.get("end_word"),
+                            "embedding_model": embedding_model_name
                         },
                         token_count=chunk_info["word_count"],
                         created_at=datetime.utcnow()
@@ -339,9 +344,9 @@ async def upload_document_unified(
                     db.add(chunk)
                     chunk_records.append(chunk)
 
-                db.flush()
+                db.flush()  # Flush to get chunk IDs
 
-                embeddings = processing_result.get("embeddings") or []
+                # ALSO populate document_embeddings table (for backup/safety)
                 if embeddings:
                     for chunk_obj, embedding_vector in zip(chunk_records, embeddings):
                         embedding_record = DocumentEmbedding(
@@ -353,7 +358,7 @@ async def upload_document_unified(
                         )
                         db.add(embedding_record)
 
-                db.commit()
+                db.commit()  # ✅ Now BOTH tables are populated
 
             response_metadata = enhanced_metadata
 

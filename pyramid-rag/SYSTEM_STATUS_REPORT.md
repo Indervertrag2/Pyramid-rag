@@ -28,7 +28,7 @@ The Pyramid RAG Platform is now fully operational with all critical issues resol
 ### 3. Password Authentication - FIXED
 - **Problem**: Bcrypt hash corruption in PostgreSQL
 - **Solution**: Reset admin password using proper bcrypt implementation
-- **Result**: Login working with admin@pyramid-computer.de / admin123
+- **Result**: Login working with admin@pyramid-computer.de / PyramidAdmin2024!
 
 ### 4. Cleanup Completed
 - **Removed**: app/core directory (no longer needed)
@@ -60,7 +60,7 @@ The Pyramid RAG Platform is now fully operational with all critical issues resol
 ### Authentication
 - Login endpoint working: `/api/v1/auth/login`
 - JWT tokens generating correctly
-- Admin account functional
+- Admin account functional (admin@pyramid-computer.de / PyramidAdmin2024!)
 
 ## Testing Results
 

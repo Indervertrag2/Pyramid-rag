@@ -5,13 +5,12 @@ from sqlalchemy.dialects.postgresql import ARRAY
 import numpy as np
 
 from app.models import Document, DocumentChunk, SearchMode, DocumentScope
-from app.services.ollama_embedding_service import OllamaEmbeddingService
-# from app.core.config import settings
+from app.services.bge_m3_embedding_service import BGEM3EmbeddingService  # ✅ Upgraded to BGE-M3
 
 
 class SearchService:
     def __init__(self):
-        self.embedding_service = OllamaEmbeddingService()
+        self.embedding_service = BGEM3EmbeddingService()  # ✅ Now using BGE-M3 (1024 dimensions)
 
     async def search(
         self,
@@ -377,6 +376,149 @@ class SearchService:
 
         # If no match found, return beginning of text
         return text[:max_length] + "..." if len(text) > max_length else text
+
+    async def context_search(
+        self,
+        db: AsyncSession,
+        query: str,
+        user,
+        mode: SearchMode = SearchMode.HYBRID,
+        scope: Optional[DocumentScope] = None,
+        department: Optional[str] = None,
+        limit: int = 10,
+        context_window: int = 2,  # Number of chunks before/after to include
+        min_score: float = 0.5
+    ) -> Dict[str, Any]:
+        """
+        Context-aware search: Returns matching chunks WITH surrounding context.
+
+        This is CRITICAL for RAG quality! Instead of returning isolated chunks,
+        we return each matching chunk plus N chunks before/after it, providing
+        the LLM with more complete context.
+
+        Args:
+            query: Search query
+            user: Current user (for access control)
+            mode: Search mode (HYBRID, VECTOR, KEYWORD)
+            scope: Document scope filter
+            department: Department filter
+            limit: Number of main matches to return
+            context_window: Number of chunks to include before/after each match (default: 2)
+            min_score: Minimum similarity score (for vector/hybrid search)
+
+        Returns:
+            Dict with results, where each result includes:
+            - main_chunk: The matching chunk
+            - context_before: List of chunks before the match
+            - context_after: List of chunks after the match
+            - full_context: Combined text with all context
+        """
+
+        # First, perform regular search to find matching chunks
+        search_results = await self.search(
+            db, query, user, mode, scope, department, limit * 2, 0, min_score
+        )
+
+        if not search_results["results"]:
+            return {
+                "query": query,
+                "mode": mode.value,
+                "total_results": 0,
+                "results": [],
+                "context_window": context_window
+            }
+
+        # For each matching chunk, fetch surrounding context
+        context_results = []
+
+        for match in search_results["results"][:limit]:
+            chunk_id = match.get("chunk_id")
+            document_id = match.get("document_id")
+            chunk_index = match.get("chunk_index", 0)
+
+            if not chunk_id or not document_id:
+                continue
+
+            # Fetch surrounding chunks from same document
+            context_query = text("""
+                SELECT
+                    dc.id,
+                    dc.chunk_index,
+                    dc.content,
+                    dc.meta_data
+                FROM document_chunks dc
+                WHERE
+                    dc.document_id = :document_id
+                    AND dc.chunk_index >= :start_index
+                    AND dc.chunk_index <= :end_index
+                ORDER BY dc.chunk_index ASC
+            """)
+
+            start_index = max(0, chunk_index - context_window)
+            end_index = chunk_index + context_window
+
+            result = await db.execute(
+                context_query,
+                {
+                    "document_id": document_id,
+                    "start_index": start_index,
+                    "end_index": end_index
+                }
+            )
+
+            context_chunks = result.fetchall()
+
+            # Separate into before, main, after
+            context_before = []
+            main_chunk = None
+            context_after = []
+
+            for chunk in context_chunks:
+                chunk_data = {
+                    "chunk_id": str(chunk.id),
+                    "chunk_index": chunk.chunk_index,
+                    "content": chunk.content
+                }
+
+                if chunk.chunk_index < chunk_index:
+                    context_before.append(chunk_data)
+                elif chunk.chunk_index == chunk_index:
+                    main_chunk = chunk_data
+                else:
+                    context_after.append(chunk_data)
+
+            # Build full context text
+            full_context_parts = []
+            full_context_parts.extend([c["content"] for c in context_before])
+            if main_chunk:
+                full_context_parts.append(main_chunk["content"])
+            full_context_parts.extend([c["content"] for c in context_after])
+
+            full_context = "\n\n".join(full_context_parts)
+
+            # Add to results
+            context_results.append({
+                "document_id": document_id,
+                "document_title": match.get("document_title"),
+                "filename": match.get("filename"),
+                "similarity_score": match.get("similarity_score", match.get("relevance_score", 0)),
+                "hybrid_score": match.get("hybrid_score"),
+                "main_chunk": main_chunk,
+                "context_before": context_before,
+                "context_after": context_after,
+                "full_context": full_context,
+                "total_context_chunks": len(context_before) + 1 + len(context_after),
+                "context_window_used": context_window
+            })
+
+        return {
+            "query": query,
+            "mode": mode.value,
+            "total_results": len(context_results),
+            "results": context_results,
+            "context_window": context_window,
+            "note": "Each result includes surrounding chunks for better context"
+        }
 
     async def get_similar_documents(
         self,

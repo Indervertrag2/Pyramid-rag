@@ -51,7 +51,9 @@
       "Bash(start cmd /k \"npm run dev\")",
       "Bash(tee:*)",
       "Bash(winpty docker exec -it pyramid-postgres psql -U pyramid -d pyramid_rag -c \"SELECT email, username, primary_department, is_superuser FROM users WHERE email LIKE ''%admin%'';\")",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(winpty docker exec -it pyramid-frontend ls -la /app/)",
+      "Bash(winpty docker exec:*)"
     ],
     "deny": [],
     "ask": []
