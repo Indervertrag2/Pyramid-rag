@@ -1,13 +1,11 @@
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, Float, JSON, Table, Enum
 from sqlalchemy.dialects.postgresql import UUID
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 import enum
-
-# For pgvector, we'll use JSON for now
-VECTOR = JSON
 
 Base = declarative_base()
 
@@ -42,17 +40,28 @@ class FileScope(enum.Enum):
     GLOBAL = "GLOBAL"        # Available to all users (company database)
     CHAT = "CHAT"           # Only available in specific chat
 
+class SearchMode(enum.Enum):
+    HYBRID = "HYBRID"       # Combined vector + keyword search
+    VECTOR = "VECTOR"       # Pure semantic search
+    KEYWORD = "KEYWORD"     # Pure keyword search
+
+class DocumentScope(enum.Enum):
+    PERSONAL = "PERSONAL"   # Only accessible by owner
+    DEPARTMENT = "DEPARTMENT"  # Accessible by department
+    COMPANY = "COMPANY"     # Accessible by all users
+    ADMIN = "ADMIN"         # Admin only
+
 user_departments = Table(
     'user_departments',
     Base.metadata,
-    Column('user_id', UUID(as_uuid=True), ForeignKey('users.id')),
+    Column('user_id', UUID(as_uuid=True), ForeignKey('users.id'), index=True),
     Column('department', Enum(Department))
 )
 
 document_permissions = Table(
     'document_permissions',
     Base.metadata,
-    Column('document_id', UUID(as_uuid=True), ForeignKey('documents.id')),
+    Column('document_id', UUID(as_uuid=True), ForeignKey('documents.id'), index=True),
     Column('department', Enum(Department))
 )
 
@@ -97,7 +106,7 @@ class Document(Base):
     department = Column(Enum(Department), nullable=False)
     # access_departments = relationship("Department", secondary=document_permissions)  # Disabled for now
 
-    uploaded_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
+    uploaded_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False, index=True)
     uploaded_by_user = relationship("User", back_populates="documents")
 
     processed = Column(Boolean, default=False)
@@ -113,11 +122,11 @@ class DocumentChunk(Base):
     __tablename__ = "document_chunks"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    document_id = Column(UUID(as_uuid=True), ForeignKey('documents.id'), nullable=False)
+    document_id = Column(UUID(as_uuid=True), ForeignKey('documents.id'), nullable=False, index=True)
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     content_length = Column(Integer)
-    embedding = Column(VECTOR)  # 768-dimensional for German RoBERTa
+    embedding = Column(Vector(768))  # 768-dimensional embeddings (paraphrase-multilingual-mpnet-base-v2)
     meta_data = Column(JSON)  # Changed from 'metadata' to avoid SQLAlchemy conflict
     token_count = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -130,10 +139,10 @@ class DocumentEmbedding(Base):
     __tablename__ = "document_embeddings"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    document_id = Column(UUID(as_uuid=True), ForeignKey('documents.id'), nullable=False)
-    chunk_id = Column(UUID(as_uuid=True), ForeignKey('document_chunks.id'), nullable=False)
-    embedding = Column(VECTOR)  # 384-dimensional embeddings from sentence-transformers
-    model_name = Column(String, default="paraphrase-multilingual-MiniLM-L12-v2")
+    document_id = Column(UUID(as_uuid=True), ForeignKey('documents.id'), nullable=False, index=True)
+    chunk_id = Column(UUID(as_uuid=True), ForeignKey('document_chunks.id'), nullable=False, index=True)
+    embedding = Column(Vector(768))  # 768-dimensional embeddings (paraphrase-multilingual-mpnet-base-v2)
+    model_name = Column(String, default="paraphrase-multilingual-mpnet-base-v2")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     document = relationship("Document", back_populates="embeddings")
@@ -143,7 +152,7 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False, index=True)
     title = Column(String)
     chat_type = Column(Enum(ChatType), default=ChatType.NORMAL, nullable=False)
     expires_at = Column(DateTime)  # For temporary chats (30 days from creation)
@@ -159,7 +168,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id = Column(UUID(as_uuid=True), ForeignKey('chat_sessions.id'), nullable=False)
+    session_id = Column(UUID(as_uuid=True), ForeignKey('chat_sessions.id'), nullable=False, index=True)
     role = Column(String, nullable=False)  # 'user' or 'assistant'
     content = Column(Text, nullable=False)
     meta_data = Column(JSON)
@@ -172,10 +181,10 @@ class MessageSource(Base):
     __tablename__ = "message_sources"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    message_id = Column(UUID(as_uuid=True), ForeignKey('chat_messages.id'), nullable=False)
-    document_id = Column(UUID(as_uuid=True), ForeignKey('documents.id'))
-    chat_file_id = Column(UUID(as_uuid=True), ForeignKey('chat_files.id'))
-    chunk_id = Column(UUID(as_uuid=True), ForeignKey('document_chunks.id'))
+    message_id = Column(UUID(as_uuid=True), ForeignKey('chat_messages.id'), nullable=False, index=True)
+    document_id = Column(UUID(as_uuid=True), ForeignKey('documents.id'), index=True)
+    chat_file_id = Column(UUID(as_uuid=True), ForeignKey('chat_files.id'), index=True)
+    chunk_id = Column(UUID(as_uuid=True), ForeignKey('document_chunks.id'), index=True)
     relevance_score = Column(Float)
 
     message = relationship("ChatMessage", back_populates="sources")
@@ -185,7 +194,7 @@ class ChatFile(Base):
     __tablename__ = "chat_files"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id = Column(UUID(as_uuid=True), ForeignKey('chat_sessions.id'), nullable=False)
+    session_id = Column(UUID(as_uuid=True), ForeignKey('chat_sessions.id'), nullable=False, index=True)
     filename = Column(String, nullable=False)
     original_filename = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
@@ -203,7 +212,7 @@ class ChatFile(Base):
     scope = Column(Enum(FileScope), default=FileScope.CHAT, nullable=False)
     save_to_company = Column(Boolean, default=False)  # Toggle for saving to global database
 
-    uploaded_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
+    uploaded_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False, index=True)
     processed = Column(Boolean, default=False)
     processing_error = Column(Text)
 
@@ -219,7 +228,7 @@ class ChatFileChunk(Base):
     __tablename__ = "chat_file_chunks"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    chat_file_id = Column(UUID(as_uuid=True), ForeignKey('chat_files.id'), nullable=False)
+    chat_file_id = Column(UUID(as_uuid=True), ForeignKey('chat_files.id'), nullable=False, index=True)
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     meta_data = Column(JSON)
@@ -233,10 +242,10 @@ class ChatFileEmbedding(Base):
     __tablename__ = "chat_file_embeddings"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    chat_file_id = Column(UUID(as_uuid=True), ForeignKey('chat_files.id'), nullable=False)
-    chunk_id = Column(UUID(as_uuid=True), ForeignKey('chat_file_chunks.id'), nullable=False)
-    embedding = Column(VECTOR)  # 384-dimensional embeddings from sentence-transformers
-    model_name = Column(String, default="paraphrase-multilingual-MiniLM-L12-v2")
+    chat_file_id = Column(UUID(as_uuid=True), ForeignKey('chat_files.id'), nullable=False, index=True)
+    chunk_id = Column(UUID(as_uuid=True), ForeignKey('chat_file_chunks.id'), nullable=False, index=True)
+    embedding = Column(Vector(768))  # 768-dimensional embeddings (paraphrase-multilingual-mpnet-base-v2)
+    model_name = Column(String, default="paraphrase-multilingual-mpnet-base-v2")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     chat_file = relationship("ChatFile", back_populates="embeddings")
@@ -246,7 +255,7 @@ class SearchHistory(Base):
     __tablename__ = "search_history"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False, index=True)
     query = Column(Text, nullable=False)
     filters = Column(JSON)
     result_count = Column(Integer)
@@ -261,4 +270,4 @@ class SystemSettings(Base):
     key = Column(String, unique=True, nullable=False)
     value = Column(JSON, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    updated_by = Column(UUID(as_uuid=True), ForeignKey('users.id'))
+    updated_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), index=True)

@@ -49,10 +49,23 @@ class VectorStore:
                 try:
                     dept_enum = Department(user_department)
                     visibility_json = cast(Document.meta_data, JSONB)["visibility"].astext
+                    allowed_departments_json = cast(Document.meta_data, JSONB)["allowed_departments"]
                     base_query = base_query.filter(
                         or_(
                             Document.department == dept_enum,
-                            visibility_json == "all"
+                            visibility_json == "all",
+                            and_(
+                                allowed_departments_json.isnot(None),
+                                allowed_departments_json.contains([dept_enum.value]),
+                            ),
+                            and_(
+                                allowed_departments_json.isnot(None),
+                                allowed_departments_json.contains([dept_enum.name]),
+                            ),
+                            and_(
+                                allowed_departments_json.isnot(None),
+                                allowed_departments_json.contains(["ALL"]),
+                            ),
                         )
                     )
                 except ValueError:
@@ -76,6 +89,15 @@ class VectorStore:
                         if document.meta_data:
                             visibility = document.meta_data.get("visibility")
 
+                        meta = document.meta_data or {}
+                        raw_allowed = meta.get('allowed_departments')
+                        if isinstance(raw_allowed, list):
+                            allowed_departments = [str(dep) for dep in raw_allowed if dep]
+                        elif raw_allowed:
+                            allowed_departments = [str(raw_allowed)]
+                        else:
+                            allowed_departments = []
+
                         results.append({
                             'chunk_id': str(chunk.id),
                             'document_id': str(document.id),
@@ -88,7 +110,10 @@ class VectorStore:
                             'visibility': visibility,
                             'file_type': document.file_type.value if document.file_type else None,
                             'created_at': document.created_at.isoformat() if document.created_at else None,
-                            'meta_data': chunk.meta_data or {}
+                            'meta_data': chunk.meta_data or {},
+                            'allowed_departments': allowed_departments,
+                            'scope': 'GLOBAL',
+                            'source': 'knowledge_base',
                         })
                 except Exception as e:
                     logger.error(f"Error calculating similarity for chunk {chunk.id}: {e}")
@@ -132,10 +157,23 @@ class VectorStore:
                 try:
                     dept_enum = Department(user_department)
                     visibility_json = cast(Document.meta_data, JSONB)["visibility"].astext
+                    allowed_departments_json = cast(Document.meta_data, JSONB)["allowed_departments"]
                     base_query = base_query.filter(
                         or_(
                             Document.department == dept_enum,
-                            visibility_json == "all"
+                            visibility_json == "all",
+                            and_(
+                                allowed_departments_json.isnot(None),
+                                allowed_departments_json.contains([dept_enum.value]),
+                            ),
+                            and_(
+                                allowed_departments_json.isnot(None),
+                                allowed_departments_json.contains([dept_enum.name]),
+                            ),
+                            and_(
+                                allowed_departments_json.isnot(None),
+                                allowed_departments_json.contains(["ALL"]),
+                            ),
                         )
                     )
                 except ValueError:
@@ -160,20 +198,28 @@ class VectorStore:
                 if document.meta_data:
                     visibility = document.meta_data.get("visibility")
 
+                meta = document.meta_data or {}
+                raw_allowed = meta.get('allowed_departments')
+                if isinstance(raw_allowed, list):
+                    allowed_departments = [str(dep) for dep in raw_allowed if dep]
+                elif raw_allowed:
+                    allowed_departments = [str(raw_allowed)]
+                else:
+                    allowed_departments = []
+
                 results.append({
-                    'chunk_id': str(chunk.id),
                     'document_id': str(document.id),
                     'document_title': document.title or document.filename,
-                    'document_filename': document.filename,
                     'chunk_content': chunk.content,
-                    'chunk_index': chunk.chunk_index,
+                    'chunk_id': str(chunk.id),
                     'keyword_score': round(match_score, 4),
-                    'match_count': match_count,
                     'department': document.department.value if document.department else None,
-                    'visibility': visibility,
+                    'visibility': meta.get('visibility') if meta else None,
                     'file_type': document.file_type.value if document.file_type else None,
                     'created_at': document.created_at.isoformat() if document.created_at else None,
-                    'meta_data': chunk.meta_data or {}
+                    'allowed_departments': allowed_departments,
+                    'scope': 'GLOBAL',
+                    'source': 'knowledge_base',
                 })
 
             results.sort(key=lambda x: x['keyword_score'], reverse=True)

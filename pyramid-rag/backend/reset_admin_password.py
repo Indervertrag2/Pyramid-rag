@@ -1,79 +1,34 @@
-#!/usr/bin/env python3
-"""Reset admin password with proper bcrypt hash"""
 
-import bcrypt
-import psycopg2
-import sys
+import asyncio
+from sqlalchemy.future import select
+from app.database import SessionLocal
+from app.models import User
+from app.auth import get_password_hash
 
-# Database connection
-conn_params = {
-    'host': 'localhost',
-    'port': 15432,
-    'database': 'pyramid_rag',
-    'user': 'pyramid_user',
-    'password': 'pyramid_pass'
-}
+async def reset_admin_password():
+    """
+    Connects to the database and resets the password for the default admin user.
+    """
+    async with SessionLocal() as session:
+        async with session.begin():
+            admin_email = "admin@pyramid-computer.de"
+            new_password = "PyramidAdmin2024!"
 
-def reset_admin_password():
-    """Reset the admin password to 'admin123'"""
-    # Generate proper bcrypt hash
-    password = b'admin123'
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password, salt).decode('utf-8')
+            # Find the admin user
+            result = await session.execute(
+                select(User).where(User.email == admin_email)
+            )
+            admin_user = result.scalar_one_or_none()
 
-    print(f"Generated hash: {hashed}")
-
-    try:
-        # Connect to database
-        conn = psycopg2.connect(**conn_params)
-        cur = conn.cursor()
-
-        # Update admin password
-        cur.execute("""
-            UPDATE users
-            SET hashed_password = %s
-            WHERE email = 'admin@pyramid-computer.de'
-        """, (hashed,))
-
-        affected = cur.rowcount
-
-        if affected > 0:
-            conn.commit()
-            print(f"Successfully updated admin password (affected rows: {affected})")
-            print("You can now login with:")
-            print("  Email: admin@pyramid-computer.de")
-            print("  Password: admin123")
-        else:
-            print("Admin user not found. Creating new admin user...")
-
-            # Create admin user if not exists
-            cur.execute("""
-                INSERT INTO users (
-                    id, email, username, full_name, hashed_password,
-                    primary_department, is_superuser, is_active, created_at, updated_at
-                ) VALUES (
-                    gen_random_uuid(),
-                    'admin@pyramid-computer.de',
-                    'admin',
-                    'System Administrator',
-                    %s,
-                    'MANAGEMENT',
-                    true,
-                    true,
-                    NOW(),
-                    NOW()
-                )
-            """, (hashed,))
-
-            conn.commit()
-            print("Admin user created successfully")
-
-        cur.close()
-        conn.close()
-
-    except Exception as e:
-        print(f"Database error: {e}")
-        sys.exit(1)
+            if admin_user:
+                print(f"Found admin user: {admin_user.email}")
+                # Hash the new password and update the user object
+                hashed_password = get_password_hash(new_password)
+                admin_user.hashed_password = hashed_password
+                print(f"Successfully reset password for {admin_email}")
+            else:
+                print(f"Admin user {admin_email} not found.")
 
 if __name__ == "__main__":
-    reset_admin_password()
+    print("Starting admin password reset...")
+    asyncio.run(reset_admin_password())

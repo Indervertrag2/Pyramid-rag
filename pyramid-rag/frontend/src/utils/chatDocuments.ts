@@ -1,35 +1,4 @@
-export interface UploadedDocumentInfo {
-  id: string;
-  documentId: string;
-  title: string;
-  filename: string;
-  originalFilename: string;
-  scope: 'GLOBAL' | 'CHAT';
-  fileType?: string;
-  mimeType?: string;
-  content?: string;
-  contentPreview?: string;
-  contentLength?: number;
-  metadata?: Record<string, any>;
-  department?: string;
-  accessDepartments?: string[];
-  uploadedBy?: string;
-  createdAt?: string;
-  updatedAt?: string;
-  source?: 'chat' | 'knowledge_base';
-}
-
-export interface ConversationDocument {
-  id: string;
-  documentId?: string;
-  title: string;
-  scope: 'GLOBAL' | 'CHAT';
-  source: 'chat' | 'knowledge_base';
-  contentPreview?: string;
-  mimeType?: string;
-  chunkId?: string;
-  score?: number;
-}
+import type { ConversationDocument, UploadedDocumentInfo } from '../types';
 
 const fallbackId = () => `temp-${Date.now()}`;
 
@@ -117,6 +86,17 @@ export const normalizeConversationDocuments = (docs: any[]): ConversationDocumen
     const source: 'chat' | 'knowledge_base' = doc?.source === 'knowledge_base' || scope === 'GLOBAL'
       ? 'knowledge_base'
       : 'chat';
+    const rawScore =
+      typeof doc?.score === 'number'
+        ? doc.score
+        : typeof doc?.relevance_score === 'number'
+          ? doc.relevance_score
+          : typeof doc?.hybrid_score === 'number'
+            ? doc.hybrid_score
+            : typeof doc?.similarity_score === 'number'
+              ? doc.similarity_score
+              : undefined;
+    const alias = typeof doc?.alias === 'string' ? doc.alias : undefined;
 
     return {
       id: String(doc?.document_id ?? doc?.id ?? `context-${index}`),
@@ -127,7 +107,8 @@ export const normalizeConversationDocuments = (docs: any[]): ConversationDocumen
       contentPreview: typeof doc?.content_preview === 'string' ? doc.content_preview : undefined,
       mimeType: doc?.mime_type,
       chunkId: doc?.chunk_id,
-      score: typeof doc?.score === 'number' ? doc.score : undefined,
+      score: rawScore,
+      alias,
     };
   });
 };

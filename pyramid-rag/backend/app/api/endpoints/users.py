@@ -4,12 +4,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from pydantic import BaseModel, EmailStr
 
-from app.database import get_db
-from app.auth import get_password_hash, validate_password_strength
-from app.models import User, Department, AuditLog
+from app.database import get_async_db
+from app.auth import get_password_hash
+from app.models import User, Department
 from app.api.deps import get_current_superuser, get_current_user
 
-router = APIRouter(prefix="/users", tags=["Users"])
+router = APIRouter(prefix="/api/v1/users", tags=["Users"])
 
 
 class UserCreate(BaseModel):
@@ -46,7 +46,7 @@ class UserResponse(BaseModel):
 async def list_users(
     skip: int = 0,
     limit: int = 100,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_superuser)
 ):
     """List all users (admin only)."""
@@ -74,7 +74,7 @@ async def list_users(
 @router.post("/", response_model=UserResponse)
 async def create_user(
     user_data: UserCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_superuser)
 ):
     """Create a new user (admin only)."""
@@ -142,7 +142,7 @@ async def create_user(
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get user by ID."""
@@ -180,7 +180,7 @@ async def get_user(
 async def update_user(
     user_id: str,
     user_data: UserUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_superuser)
 ):
     """Update user (admin only)."""
@@ -234,7 +234,7 @@ async def update_user(
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_superuser)
 ):
     """Delete user (admin only)."""

@@ -4,14 +4,14 @@ from sqlalchemy import select, text, and_, or_, func
 from sqlalchemy.dialects.postgresql import ARRAY
 import numpy as np
 
-from app.models import Document, DocumentChunk, Tag, DocumentScope, SearchMode
-from app.services.embedding_service import EmbeddingService
+from app.models import Document, DocumentChunk, SearchMode, DocumentScope
+from app.services.ollama_embedding_service import OllamaEmbeddingService
 # from app.core.config import settings
 
 
 class SearchService:
     def __init__(self):
-        self.embedding_service = EmbeddingService()
+        self.embedding_service = OllamaEmbeddingService()
 
     async def search(
         self,

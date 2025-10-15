@@ -5,6 +5,7 @@ Implements SHA-256 deduplication, metadata extraction, text chunking, and embedd
 
 import hashlib
 import logging
+logger = logging.getLogger(__name__)
 import os
 import uuid
 from pathlib import Path

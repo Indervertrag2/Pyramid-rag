@@ -1,0 +1,457 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+from enum import Enum
+import time
+import uuid
+import json
+import logging
+
+from app.database import get_db
+from app.models import User
+from app.auth import get_current_user as auth_get_current_user
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v1/mcp", tags=["MCP"])
+
+# OAuth2 scheme
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
+# Dependency to get current user
+async def get_current_active_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+) -> User:
+    user = auth_get_current_user(db, token)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inactive user"
+        )
+    return user
+
+
+# Request models for MCP
+class MCPQueryMode(str, Enum):
+    HYBRID = "HYBRID"
+    VECTOR = "VECTOR"
+    KEYWORD = "KEYWORD"
+
+
+class MCPUngatedSearchRequest(BaseModel):
+    query: str
+    mode: MCPQueryMode = MCPQueryMode.HYBRID
+    limit: int = 5
+    offset: int = 0
+    department: Optional[str] = None
+
+
+class MCPMessageRequest(BaseModel):
+    messages: List[Dict[str, Any]]
+    tools: Optional[List[str]] = None
+    session_id: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
+
+
+@router.post("/search")
+async def mcp_search(
+    request: MCPUngatedSearchRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Search documents via MCP-compatible response structure."""
+    from app.vector_store import vector_store
+    department_value = request.department or (current_user.primary_department.value if hasattr(current_user.primary_department, 'value') else str(current_user.primary_department))
+
+    limit_for_query = max(request.limit, request.limit + request.offset)
+    start_time = time.time()
+
+    if request.mode == MCPQueryMode.VECTOR:
+        raw_results = await vector_store.semantic_search(
+            query=request.query,
+            db=db,
+            limit=limit_for_query,
+            user_department=department_value
+        )
+    elif request.mode == MCPQueryMode.KEYWORD:
+        raw_results = await vector_store.keyword_search(
+            query=request.query,
+            db=db,
+            limit=limit_for_query,
+            user_department=department_value
+        )
+    else:
+        raw_results = await vector_store.hybrid_search(
+            query=request.query,
+            db=db,
+            limit=limit_for_query,
+            user_department=department_value
+        )
+
+    results = raw_results[request.offset:request.offset + request.limit]
+    took_ms = int((time.time() - start_time) * 1000)
+
+    return {
+        "query": request.query,
+        "mode": request.mode.value,
+        "results": results,
+        "total_results": len(raw_results),
+        "took_ms": took_ms
+    }
+
+
+@router.post("/message")
+async def process_mcp_message(
+    request: MCPMessageRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Process MCP protocol message with enhanced functionality"""
+    try:
+        from app.services.mcp_gateway import get_mcp_gateway, initialize_mcp_gateway
+
+        session_id = request.session_id or f"session_{current_user.id}_{datetime.now().timestamp()}"
+        department_value = (
+            current_user.primary_department.value
+            if hasattr(current_user.primary_department, 'value')
+            else str(current_user.primary_department)
+        )
+
+        mcp_gateway = get_mcp_gateway(db)
+        if not mcp_gateway:
+            mcp_gateway = await initialize_mcp_gateway(db)
+        else:
+            mcp_gateway.update_session(db)
+
+        context_payload = request.context or {}
+        conversation = [dict(msg) for msg in request.messages]
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one message is required",
+            )
+
+        last_user_index = None
+        for idx in range(len(conversation) - 1, -1, -1):
+            if conversation[idx].get('role', 'user') == 'user':
+                last_user_index = idx
+                break
+
+        if last_user_index is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No user message provided",
+            )
+
+        def _as_list(value):
+            if not value:
+                return []
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+            if isinstance(value, dict):
+                return [value]
+            return []
+
+        rag_enabled = context_payload.get('rag_enabled')
+        if rag_enabled is None:
+            rag_enabled = conversation[last_user_index].get('rag_enabled')
+        if rag_enabled is None:
+            rag_enabled = True
+        conversation[last_user_index]['rag_enabled'] = rag_enabled
+
+        uploaded_documents = _as_list(context_payload.get('uploaded_documents'))
+        existing_docs = _as_list(conversation[last_user_index].get('uploaded_documents'))
+        merged_docs = []
+        seen_doc_ids = set()
+        for doc in existing_docs + uploaded_documents:
+            doc_id = doc.get('id') or doc.get('document_id') or str(uuid.uuid4())
+            if doc_id in seen_doc_ids:
+                continue
+            seen_doc_ids.add(doc_id)
+            merged_docs.append(doc)
+        if merged_docs:
+            conversation[last_user_index]['uploaded_documents'] = merged_docs
+
+        response = await mcp_gateway.process_message(
+            messages=conversation,
+            session_id=session_id,
+            user_id=str(current_user.id),
+            department=department_value,
+            context_payload=context_payload,
+        )
+
+        llm_citations = response.get('citations', []) or []
+
+        manual_documents = []
+        seen_manual_ids = set()
+        for message in conversation:
+            for doc in _as_list(message.get('uploaded_documents')):
+                doc_id = doc.get('id') or doc.get('document_id')
+                content = (doc.get('content') or doc.get('content_preview') or '').strip()
+                if not doc_id or not content:
+                    continue
+                if doc_id in seen_manual_ids:
+                    continue
+                seen_manual_ids.add(doc_id)
+                manual_documents.append(doc)
+
+        manual_citations = []
+        for doc in manual_documents[-5:]:
+            doc_id = doc.get('id') or doc.get('document_id')
+            content = (doc.get('content') or doc.get('content_preview') or '').strip()
+            if not doc_id or not content:
+                continue
+            manual_citations.append({
+                'document_id': doc_id,
+                'document_title': doc.get('title') or doc.get('filename') or '',
+                'snippet': content[:200],
+                'relevance_score': 1.0,
+            })
+
+        final_citations = llm_citations if rag_enabled else []
+        existing_ids = {c.get('document_id') for c in final_citations if c.get('document_id')}
+        for citation in manual_citations:
+            if citation['document_id'] not in existing_ids:
+                final_citations.append(citation)
+                existing_ids.add(citation['document_id'])
+
+        return {
+            'success': response.get('success', True),
+            'messages': [
+                {
+                    'role': 'assistant',
+                    'content': response.get('content', 'Keine Antwort generiert.')
+                }
+            ],
+            'citations': final_citations,
+            'metadata': {
+                'session_id': session_id,
+                'rag_enabled': rag_enabled,
+                'tools_used': request.tools,
+                'gateway_metadata': response.get('metadata', {})
+            }
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@router.get("/tools")
+async def get_mcp_tools(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get available MCP tools"""
+    from app.services.mcp_gateway import get_mcp_gateway, initialize_mcp_gateway
+
+    mcp_gateway = get_mcp_gateway(db)
+    if not mcp_gateway:
+        mcp_gateway = await initialize_mcp_gateway(db)
+    else:
+        mcp_gateway.update_session(db)
+
+    return {
+        "tools": mcp_gateway.get_available_tools()
+    }
+
+
+@router.get("/context/{session_id}")
+async def get_mcp_context(
+    session_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get MCP context summary"""
+    from app.services.mcp_gateway import get_mcp_gateway, initialize_mcp_gateway
+
+    mcp_gateway = get_mcp_gateway(db)
+    if not mcp_gateway:
+        mcp_gateway = await initialize_mcp_gateway(db)
+    else:
+        mcp_gateway.update_session(db)
+
+    context = mcp_gateway.get_context_summary(session_id)
+    if not context:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Context not found"
+        )
+
+    return context
+
+
+@router.delete("/context/{session_id}")
+async def clear_mcp_context(
+    session_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Clear MCP context"""
+    from app.services.mcp_gateway import get_mcp_gateway, initialize_mcp_gateway
+
+    mcp_gateway = get_mcp_gateway(db)
+    if not mcp_gateway:
+        mcp_gateway = await initialize_mcp_gateway(db)
+    else:
+        mcp_gateway.update_session(db)
+
+    mcp_gateway.clear_context(session_id)
+    return {"message": "Context cleared"}
+
+
+@router.post("/stream")
+async def stream_mcp_chat(
+    request: MCPMessageRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Stream MCP chat responses using Server-Sent Events"""
+    from app.services.mcp_gateway import get_mcp_gateway, initialize_mcp_gateway
+    from app.database import get_async_db
+    from app.models import ChatMessage
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    session_id = request.session_id or str(uuid.uuid4())
+    department_value = (
+        current_user.primary_department.value
+        if hasattr(current_user.primary_department, 'value')
+        else str(current_user.primary_department)
+    )
+
+    mcp_gateway = get_mcp_gateway(db)
+    if not mcp_gateway:
+        mcp_gateway = await initialize_mcp_gateway(db)
+    else:
+        mcp_gateway.update_session(db)
+
+    context_payload = request.context or {}
+    conversation = [dict(msg) for msg in request.messages]
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one message is required",
+        )
+
+    last_user_index = None
+    for idx in range(len(conversation) - 1, -1, -1):
+        if conversation[idx].get('role', 'user') == 'user':
+            last_user_index = idx
+            break
+
+    if last_user_index is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No user message provided",
+        )
+
+    def _as_list(value):
+        if not value:
+            return []
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            return [value]
+        return []
+
+    user_message = conversation[last_user_index]
+    rag_enabled = context_payload.get('rag_enabled')
+    if rag_enabled is None:
+        rag_enabled = user_message.get('rag_enabled')
+    if rag_enabled is None:
+        rag_enabled = True
+    conversation[last_user_index]['rag_enabled'] = rag_enabled
+
+    uploaded_documents = _as_list(context_payload.get('uploaded_documents'))
+    existing_docs = _as_list(user_message.get('uploaded_documents'))
+    merged_docs = []
+    seen_doc_ids = set()
+    for doc in existing_docs + uploaded_documents:
+        doc_id = doc.get('id') or doc.get('document_id') or str(uuid.uuid4())
+        if doc_id in seen_doc_ids:
+            continue
+        seen_doc_ids.add(doc_id)
+        merged_docs.append(doc)
+    if merged_docs:
+        conversation[last_user_index]['uploaded_documents'] = merged_docs
+
+    conversation_for_gateway = conversation[: last_user_index + 1]
+    user_content = user_message.get('content', '')
+
+    async_db_gen = get_async_db()
+    async_db: AsyncSession = await anext(async_db_gen)
+    try:
+        user_message_record = ChatMessage(
+            session_id=uuid.UUID(session_id),
+            role='user',
+            content=user_content,
+            meta_data={'use_rag': rag_enabled, 'retrieved_documents': []}
+        )
+        async_db.add(user_message_record)
+        await async_db.commit()
+    except Exception as exc:
+        logger.error(f"Failed to save user message: {exc}")
+        await async_db.rollback()
+
+    assistant_response = ""
+    retrieved_docs = []
+
+    async def sse_generator():
+        nonlocal assistant_response, retrieved_docs
+        try:
+            async for event in mcp_gateway.stream_chat(
+                messages=conversation_for_gateway,
+                session_id=session_id,
+                user_id=str(current_user.id),
+                department=department_value,
+                context_payload=context_payload
+            ):
+                if event['type'] == 'chunk':
+                    chunk_text = event['chunk']
+                    assistant_response += chunk_text
+                    yield f"event: message\ndata: {json.dumps({'chunk': chunk_text})}\n\n"
+                elif event['type'] == 'complete':
+                    payload = event['payload']
+                    payload.setdefault('metadata', {})
+                    payload['metadata'].setdefault('session_id', session_id)
+                    payload['metadata'].setdefault('rag_enabled', rag_enabled)
+                    retrieved_docs = payload.get('citations', [])
+
+                    try:
+                        assistant_message = ChatMessage(
+                            session_id=uuid.UUID(session_id),
+                            role='assistant',
+                            content=assistant_response,
+                            meta_data={'use_rag': rag_enabled, 'retrieved_documents': retrieved_docs}
+                        )
+                        async_db.add(assistant_message)
+                        await async_db.commit()
+                    except Exception as exc:
+                        logger.error(f"Failed to save assistant message: {exc}")
+                        await async_db.rollback()
+
+                    yield f"event: done\ndata: {json.dumps(payload)}\n\n"
+                elif event['type'] == 'error':
+                    yield f"event: error\ndata: {json.dumps({'error': event.get('error', 'unknown error')})}\n\n"
+        except Exception as exc:
+            logger.exception('MCP streaming failed')
+            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
+        finally:
+            await async_db.close()
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")

@@ -1,0 +1,859 @@
+﻿"""Async-first MCP gateway backed by Ollama.
+
+This module provides a canonical implementation of the Pyramid MCP logic that
+runs inside the FastAPI application. It exposes search tools, manages in-memory
+chat context, and interacts with the Ollama large language model using the
+async-native `OllamaClient`.
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+
+from app.models import Document, DocumentChunk
+from app.ollama_client import OllamaClient
+from app.vector_store import VectorStore
+MAX_MANUAL_DOCUMENT_CHARS = 2000
+MAX_SEARCH_SNIPPET_CHARS = 600
+HISTORY_MESSAGE_LIMIT = 5
+
+
+logger = logging.getLogger(__name__)
+
+
+class ToolType(Enum):
+    """Enumeration of supported MCP tools."""
+
+    DOCUMENT_SEARCH = "document_search"
+    VECTOR_SEARCH = "vector_search"
+    KEYWORD_SEARCH = "keyword_search"
+    HYBRID_SEARCH = "hybrid_search"
+    CHAT = "chat"
+    RAG_DOC_RESOURCE = "rag_doc_resource"
+
+
+@dataclass
+class MCPMessage:
+    """Single message that participates in the MCP chat context."""
+
+    role: str
+    content: str
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
+
+
+@dataclass
+class MCPContext:
+    """Ephemeral in-memory chat context for a given MCP session."""
+
+    session_id: str
+    user_id: str
+    department: str
+    messages: List[MCPMessage] = field(default_factory=list)
+    documents: List[Dict[str, Any]] = field(default_factory=list)
+    temperature: float = 0.7
+
+    def add_documents(self, docs: List[Dict[str, Any]], max_documents: int = 5, mark_recent: bool = False) -> None:
+        """Merge uploaded documents into the context while avoiding duplicates."""
+
+        if not docs:
+            return
+
+        existing_by_id: Dict[str, Dict[str, Any]] = {}
+        for existing_doc in self.documents:
+            key = existing_doc.get("id") or existing_doc.get("document_id")
+            if key:
+                existing_by_id[str(key)] = existing_doc
+        existing_ids = set(existing_by_id.keys())
+
+        for incoming in docs:
+            content = _sanitize_text(incoming.get("content") or "")
+            if not content:
+                continue
+            document_id = str(incoming.get("id") or incoming.get("document_id") or uuid.uuid4())
+
+            if document_id in existing_ids:
+                if mark_recent:
+                    existing_by_id[document_id]["is_recent"] = True
+                continue
+
+            prepared = {
+                "id": document_id,
+                "title": incoming.get("title") or incoming.get("filename") or "Dokument",
+                "content": content,
+                "scope": incoming.get("scope", "CHAT"),
+                "is_recent": mark_recent,
+            }
+            self.documents.append(prepared)
+            existing_ids.add(document_id)
+            existing_by_id[document_id] = prepared
+
+        if len(self.documents) > max_documents:
+            self.documents = self.documents[-max_documents:]
+
+
+
+def _sanitize_text(value: str) -> str:
+    return value.replace("\x00", " ").strip()
+
+
+def _truncate_text(value: str, max_chars: int) -> str:
+    sanitized = _sanitize_text(value or "")
+    if max_chars <= 0 or len(sanitized) <= max_chars:
+        return sanitized
+    return sanitized[:max_chars].rstrip() + "..."
+
+
+def _ensure_list_of_dicts(value: Any) -> List[Dict[str, Any]]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        return [value]
+    return []
+
+
+class MCPTool:
+    """Base class for MCP tools."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    async def execute(self, **kwargs: Any) -> Dict[str, Any]:  # pragma: no cover - interface
+        raise NotImplementedError
+
+
+class DocumentSearchTool(MCPTool):
+    """Lightweight metadata search against stored documents."""
+
+    async def execute(
+        self,
+        query: str,
+        department: Optional[str] = None,
+        limit: int = 10,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        documents = self.db.query(Document).filter(Document.is_active.is_(True))
+
+        if department:
+            documents = documents.filter(Document.department == department)
+
+        if query:
+            like = f"%{query}%"
+            documents = documents.filter(
+                or_(Document.filename.ilike(like), Document.title.ilike(like))
+            )
+
+        results = [
+            {
+                "id": str(doc.id),
+                "filename": doc.filename,
+                "title": doc.title,
+                "department": doc.department,
+                "file_type": doc.file_type,
+                "created_at": doc.created_at.isoformat() if doc.created_at else None,
+            }
+            for doc in documents.limit(limit).all()
+        ]
+
+        return {"success": True, "documents": results}
+
+
+class VectorSearchTool(MCPTool):
+    """Semantic search backed by the vector store."""
+
+    def __init__(self, db: Session, vector_store: VectorStore):
+        super().__init__(db)
+        self.vector_store = vector_store
+
+    async def execute(
+        self,
+        query: str,
+        department: Optional[str] = None,
+        limit: int = 5,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        results = await self.vector_store.semantic_search(
+            query=query,
+            db=self.db,
+            limit=limit,
+            user_department=department,
+        )
+        return {
+            "success": True,
+            "tool": ToolType.VECTOR_SEARCH.value,
+            "results": results,
+            "count": len(results),
+        }
+
+
+class KeywordSearchTool(MCPTool):
+    """Keyword search against chunk content."""
+
+    def __init__(self, db: Session, vector_store: VectorStore):
+        super().__init__(db)
+        self.vector_store = vector_store
+
+    async def execute(
+        self,
+        query: str,
+        department: Optional[str] = None,
+        limit: int = 10,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        results = await self.vector_store.keyword_search(
+            query=query,
+            db=self.db,
+            limit=limit,
+            user_department=department,
+        )
+        return {
+            "success": True,
+            "tool": ToolType.KEYWORD_SEARCH.value,
+            "results": results,
+            "count": len(results),
+        }
+
+
+class HybridSearchTool(MCPTool):
+    """Hybrid search that blends vector and keyword signals."""
+
+    def __init__(self, db: Session, vector_store: VectorStore):
+        super().__init__(db)
+        self.vector_store = vector_store
+
+    async def execute(
+        self,
+        query: str,
+        department: Optional[str] = None,
+        limit: int = 10,
+        semantic_weight: float = 0.7,
+        keyword_weight: float = 0.3,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        results = await self.vector_store.hybrid_search(
+            query=query,
+            db=self.db,
+            limit=limit,
+            user_department=department,
+            semantic_weight=semantic_weight,
+            keyword_weight=keyword_weight,
+        )
+        return {
+            "success": True,
+            "tool": ToolType.HYBRID_SEARCH.value,
+            "results": results,
+            "count": len(results),
+        }
+
+
+class RagDocResourceTool(MCPTool):
+    """Retrieve document or chunk content for rag:// URIs."""
+
+    async def execute(
+        self,
+        document_id: str,
+        chunk_id: Optional[str] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        document = self.db.query(Document).filter(Document.id == document_id).one_or_none()
+        if not document:
+            return {"success": False, "error": "Document not found"}
+
+        payload: Dict[str, Any] = {
+            "success": True,
+            "document": {
+                "id": str(document.id),
+                "title": document.title,
+                "filename": document.filename,
+                "department": document.department,
+            },
+        }
+
+        if chunk_id:
+            chunk = (
+                self.db.query(DocumentChunk)
+                .filter(DocumentChunk.id == chunk_id)
+                .one_or_none()
+            )
+            if not chunk:
+                return {"success": False, "error": "Chunk not found"}
+            payload["chunk"] = {
+                "id": str(chunk.id),
+                "content": chunk.content,
+                "index": chunk.chunk_index,
+            }
+        return payload
+
+
+@dataclass
+class PreparedChat:
+    """Intermediary object describing the chat context prior to LLM calls."""
+
+    message: str
+    context: MCPContext
+    system_prompt: str
+    context_text: str
+    citations: List[Dict[str, Any]]
+    metadata: Dict[str, Any]
+
+
+class ChatTool(MCPTool):
+    """Chat tool that orchestrates RAG searches and Ollama calls."""
+
+    def __init__(self, db: Session, ollama_client: OllamaClient, vector_store: VectorStore):
+        super().__init__(db)
+        self.ollama_client = ollama_client
+        self.vector_store = vector_store
+
+    async def execute(
+        self,
+        message: str,
+        context: MCPContext,
+        rag_enabled: bool = True,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        prepared = await self.prepare_chat(message, context, rag_enabled=rag_enabled)
+        response_text = await self.ollama_client.generate_response(
+            query=prepared.message,
+            context=prepared.context_text,
+            system_prompt=prepared.system_prompt,
+            temperature=context.temperature,
+        )
+        return self._finalize_response(prepared, response_text)
+
+    async def prepare_chat(
+        self,
+        message: str,
+        context: MCPContext,
+        rag_enabled: bool = True,
+    ) -> PreparedChat:
+        alias_counter = 1
+
+        def next_alias() -> str:
+            nonlocal alias_counter
+            alias = f"DOC_{alias_counter}"
+            alias_counter += 1
+            return alias
+
+        citations: List[Dict[str, Any]] = []
+        metadata: Dict[str, Any] = {
+            "rag_enabled": rag_enabled,
+            "model": getattr(self.ollama_client, "model", None),
+            "context_messages": len(context.messages),
+        }
+
+        manual_docs = list(context.documents)
+        recent_manual_docs = [doc for doc in manual_docs if doc.get("is_recent")]
+        other_manual_docs = [doc for doc in manual_docs if not doc.get("is_recent")]
+        manual_docs = recent_manual_docs + other_manual_docs
+
+        metadata["manual_documents"] = [
+            str(doc.get("id") or doc.get("document_id"))
+            for doc in manual_docs
+            if doc.get("id") or doc.get("document_id")
+        ]
+        metadata["total_uploaded_documents"] = len(manual_docs)
+
+        context_sections: List[str] = []
+        search_results: List[Dict[str, Any]] = []
+        context_documents_summary: List[Dict[str, Any]] = []
+        priority_documents: List[Dict[str, Any]] = []
+        priority_aliases: List[str] = []
+
+        # First add uploaded documents so aliases remain stable
+        for idx, doc in enumerate(manual_docs):
+            raw_content = doc.get("content") or doc.get("content_preview") or ""
+            content = _sanitize_text(raw_content)
+            if not content:
+                continue
+
+            alias = next_alias()
+            document_id = str(doc.get("document_id") or doc.get("id") or uuid.uuid4())
+            scope = doc.get("scope", "CHAT")
+            source = "chat" if scope == "CHAT" else "knowledge_base"
+            title = doc.get("title") or doc.get("filename") or f"Dokument {idx + 1}"
+            is_recent = bool(doc.get("is_recent"))
+            source_label = "Chat-Upload" if scope == "CHAT" else "Wissensdatenbank"
+            priority_label = " [PRIORITAET HOCH]" if is_recent else ""
+            truncated_content = _truncate_text(content, MAX_MANUAL_DOCUMENT_CHARS)
+
+            context_sections.append(
+                f"[{alias}] {title} - Quelle: {source_label}{priority_label}\n{truncated_content}"
+            )
+
+            relevance = 2.5 if is_recent else 1.0
+            citation_entry = {
+                "alias": alias,
+                "document_id": document_id,
+                "document_title": title,
+                "chunk_id": None,
+                "relevance_score": relevance,
+                "snippet": truncated_content[:200],
+                "scope": scope,
+                "source": source,
+                "is_recent": is_recent,
+            }
+            citations.append(citation_entry)
+            summary_entry = {
+                "alias": alias,
+                "document_id": document_id,
+                "title": title,
+                "scope": scope,
+                "source": source,
+                "is_recent": is_recent,
+            }
+            context_documents_summary.append(summary_entry)
+            if is_recent:
+                priority_aliases.append(alias)
+                priority_documents.append(summary_entry)
+        if priority_documents:
+            metadata["priority_documents"] = priority_documents
+            metadata["priority_aliases"] = priority_aliases
+            metadata["priority_document_count"] = len(priority_documents)
+
+        if rag_enabled:
+            search_results = await self.vector_store.hybrid_search(
+                query=message,
+                db=self.db,
+                limit=5,
+                user_department=context.department,
+            )
+            metadata["search_results_found"] = len(search_results)
+
+            for result in search_results:
+                chunk = result.get("chunk_content") or result.get("content") or ""
+                chunk = _sanitize_text(chunk)
+                if not chunk:
+                    continue
+
+                alias = next_alias()
+                document_id = str(result.get("document_id", ""))
+                title = result.get("document_title") or "Dokument"
+                scope = result.get("scope") or "GLOBAL"
+                source = result.get("source") or "knowledge_base"
+                snippet = _truncate_text(chunk, MAX_SEARCH_SNIPPET_CHARS)
+
+                context_sections.append(
+                    f"[{alias}] {title} - Quelle: Wissensdatenbank\n{snippet}"
+                )
+
+                relevance = (
+                    result.get("hybrid_score")
+                    or result.get("similarity_score")
+                    or result.get("keyword_score")
+                    or 0.0
+                )
+                citation_entry = {
+                    "alias": alias,
+                    "document_id": document_id,
+                    "document_title": title,
+                    "chunk_id": str(result.get("chunk_id", "")),
+                    "relevance_score": relevance,
+                    "snippet": chunk[:200],
+                    "scope": scope,
+                    "source": source,
+                    "is_recent": False,
+                }
+                citations.append(citation_entry)
+                context_documents_summary.append({
+                    "alias": alias,
+                    "document_id": document_id,
+                    "title": title,
+                    "scope": scope,
+                    "source": source,
+                    "is_recent": False,
+                })
+        else:
+            metadata["search_results_found"] = 0
+
+        history_slice = context.messages[-HISTORY_MESSAGE_LIMIT:]
+        if history_slice:
+            history_lines = []
+            for msg in history_slice:
+                speaker = "User" if msg.role == "user" else "Assistant"
+                history_lines.append(f"{speaker}: {msg.content}")
+            context_sections.append("Vergangene Unterhaltung:\n" + "\n".join(history_lines))
+
+        metadata["context_chunks_used"] = len(context_sections)
+        metadata["search_results"] = search_results
+        metadata["context_documents"] = context_documents_summary
+        metadata["citation_aliases"] = [c.get("alias") for c in citations]
+        metadata["history_window"] = min(len(context.messages), HISTORY_MESSAGE_LIMIT)
+
+        has_multiple_docs = len(context_documents_summary) > 1
+        if context_documents_summary:
+            instruction_parts = [
+                "Dir stehen nummerierte Dokumentausschnitte im Format [DOC_X] zur Verfuegung.",
+                "Nutze sie nur, wenn sie relevant sind, und zitiere sie in eckigen Klammern.",
+                "Beende die Antwort mit einer Quellenzeile, z. B. 'Quellen: [DOC_1] Titel'.",
+            ]
+            if has_multiple_docs:
+                instruction_parts.append(
+                    "Wenn mehrere Quellen passen, kombiniere sie konsistent und fuehre alle auf."
+                )
+            if priority_aliases:
+                alias_list = ", ".join(priority_aliases)
+                instruction_parts.append(
+                    f"Bevorzuge die zuletzt hochgeladenen Dokumente {alias_list}, sofern sie zur Frage passen."
+                )
+            doc_instruction = " ".join(instruction_parts)
+        else:
+            doc_instruction = (
+                "Falls keine passenden RAG-Dokumente vorliegen, erlaeutere dies offen und antworte nur, wenn du dir sicher bist."
+            )
+
+        system_prompt = (
+            "Du bist ein hilfreicher KI-Assistent fuer die Pyramid Computer GmbH. "
+            f"Der Benutzer gehoert zur Abteilung {context.department}. "
+            "Antworte auf Deutsch, ausser der Benutzer fordert explizit etwas anderes an. "
+            "Vermeide Spekulationen und verweise klar auf die verwendeten Quellen. "
+            f"{doc_instruction}"
+        )
+
+        context_text = "\n\n".join(context_sections)
+
+        return PreparedChat(
+            message=message,
+            context=context,
+            system_prompt=system_prompt,
+            context_text=context_text,
+            citations=citations,
+            metadata=metadata,
+        )
+    async def stream_chunks(self, prepared: PreparedChat) -> AsyncGenerator[str, None]:
+        async for chunk in self.ollama_client.generate_stream(
+            query=prepared.message,
+            context=prepared.context_text,
+            system_prompt=prepared.system_prompt,
+            temperature=prepared.context.temperature,
+        ):
+            if chunk:
+                yield chunk
+
+    def finalize_stream(self, prepared: PreparedChat, response_text: str) -> Dict[str, Any]:
+        return self._finalize_response(prepared, response_text)
+
+    def _finalize_response(self, prepared: PreparedChat, response_text: str) -> Dict[str, Any]:
+        prepared.context.messages.append(MCPMessage(role="assistant", content=response_text))
+        payload = {
+            "success": True,
+            "response": response_text,
+            "citations": prepared.citations,
+        }
+        payload.update(prepared.metadata)
+        payload["context_tokens"] = self._estimate_tokens(prepared.context)
+        payload["documents"] = prepared.citations
+        return payload
+
+    @staticmethod
+    def _estimate_tokens(context: MCPContext) -> int:
+        total_chars = sum(len(msg.content) for msg in context.messages)
+        return max(total_chars // 4, 1)
+
+
+class MCPGateway:
+    """Facade that coordinates tools and chat sessions."""
+
+    def __init__(
+        self,
+        db_session: Session,
+        ollama_client: Optional[OllamaClient] = None,
+        vector_store: Optional[VectorStore] = None,
+    ) -> None:
+        self.db = db_session
+        self.ollama_client = ollama_client or OllamaClient()
+        self.vector_store = vector_store or VectorStore()
+        self.tools: Dict[ToolType, MCPTool] = {
+            ToolType.DOCUMENT_SEARCH: DocumentSearchTool(self.db),
+            ToolType.VECTOR_SEARCH: VectorSearchTool(self.db, self.vector_store),
+            ToolType.KEYWORD_SEARCH: KeywordSearchTool(self.db, self.vector_store),
+            ToolType.HYBRID_SEARCH: HybridSearchTool(self.db, self.vector_store),
+            ToolType.RAG_DOC_RESOURCE: RagDocResourceTool(self.db),
+            ToolType.CHAT: ChatTool(self.db, self.ollama_client, self.vector_store),
+        }
+
+    def update_session(self, db_session: Session) -> None:
+        self.db = db_session
+        for tool in self.tools.values():
+            tool.db = db_session
+
+    def _build_context(
+        self,
+        session_id: str,
+        user_id: str,
+        department: str,
+        messages: List[Dict[str, Any]],
+        uploaded_documents: Optional[List[Dict[str, Any]]] = None,
+    ) -> MCPContext:
+        """Construct a transient MCPContext from provided conversation state."""
+        context = MCPContext(session_id=session_id, user_id=user_id, department=department)
+        base_documents = _ensure_list_of_dicts(uploaded_documents)
+        if base_documents:
+            self._ingest_documents(context, base_documents)
+        last_index = len(messages) - 1
+        for index, message in enumerate(messages):
+            docs = _ensure_list_of_dicts(message.get("uploaded_documents"))
+            if docs:
+                mark_recent = index == last_index and message.get("role", "user") == "user"
+                self._ingest_documents(context, docs, mark_recent=mark_recent)
+            self._add_message(context, message)
+        return context
+
+    @staticmethod
+    def _find_last_user_index(messages: List[Dict[str, Any]]) -> Optional[int]:
+        for index in range(len(messages) - 1, -1, -1):
+            if messages[index].get("role", "user") == "user":
+                return index
+        return None
+
+    def _ingest_documents(
+        self,
+        context: MCPContext,
+        documents: List[Dict[str, Any]],
+        mark_recent: bool = False,
+    ) -> None:
+        context.add_documents(documents, mark_recent=mark_recent)
+
+    def _add_message(self, context: MCPContext, message: Dict[str, Any]) -> MCPMessage:
+        mcp_message = MCPMessage(
+            role=message.get("role", "user"),
+            content=message.get("content", ""),
+            tool_calls=message.get("tool_calls"),
+            tool_call_id=message.get("tool_call_id"),
+            name=message.get("name"),
+        )
+        context.messages.append(mcp_message)
+        return mcp_message
+
+    async def process_message(
+        self,
+        messages: List[Dict[str, Any]],
+        session_id: str,
+        user_id: str,
+        department: str,
+        context_payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if not messages:
+            logger.warning("Empty conversation provided for session %s", session_id)
+            return {
+                "success": False,
+                "type": "assistant",
+                "content": "",
+                "citations": [],
+                "metadata": {"warning": "No messages supplied"},
+            }
+
+        last_user_index = self._find_last_user_index(messages)
+        if last_user_index is None:
+            logger.warning("No user message found for session %s", session_id)
+            return {
+                "success": False,
+                "type": "assistant",
+                "content": "",
+                "citations": [],
+                "metadata": {"warning": "No user message supplied"},
+            }
+
+        relevant_messages = messages[: last_user_index + 1]
+        base_documents = (context_payload or {}).get("uploaded_documents")
+        context = self._build_context(
+            session_id=session_id,
+            user_id=user_id,
+            department=department,
+            messages=relevant_messages,
+            uploaded_documents=base_documents,
+        )
+
+        last_message_dict = relevant_messages[-1]
+        rag_enabled = last_message_dict.get("rag_enabled")
+        if rag_enabled is None and context_payload:
+            rag_enabled = context_payload.get("rag_enabled")
+        if rag_enabled is None:
+            rag_enabled = True
+
+        mcp_message = context.messages[-1] if context.messages else None
+        if mcp_message and mcp_message.tool_calls:
+            return await self._handle_tool_calls(mcp_message.tool_calls, context)
+
+        chat_tool = self.tools[ToolType.CHAT]
+        assert isinstance(chat_tool, ChatTool)
+        chat_result = await chat_tool.execute(
+            message=last_message_dict.get("content", ""),
+            context=context,
+            rag_enabled=rag_enabled,
+        )
+
+        return {
+            "success": chat_result.get("success", False),
+            "type": "assistant",
+            "content": chat_result.get("response", ""),
+            "citations": chat_result.get("citations", []),
+            "metadata": {
+                key: value
+                for key, value in chat_result.items()
+                if key not in {"success", "response", "citations"}
+            },
+        }
+
+    async def stream_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        session_id: str,
+        user_id: str,
+        department: str,
+        context_payload: Optional[Dict[str, Any]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        if not messages:
+            yield {"type": "error", "error": "No messages supplied"}
+            return
+
+        last_user_index = self._find_last_user_index(messages)
+        if last_user_index is None:
+            yield {"type": "error", "error": "No user message supplied"}
+            return
+
+        relevant_messages = messages[: last_user_index + 1]
+        base_documents = (context_payload or {}).get("uploaded_documents")
+        context = self._build_context(
+            session_id=session_id,
+            user_id=user_id,
+            department=department,
+            messages=relevant_messages,
+            uploaded_documents=base_documents,
+        )
+
+        last_message_dict = relevant_messages[-1]
+        rag_enabled = last_message_dict.get("rag_enabled")
+        if rag_enabled is None and context_payload:
+            rag_enabled = context_payload.get("rag_enabled")
+        if rag_enabled is None:
+            rag_enabled = True
+
+        chat_tool = self.tools[ToolType.CHAT]
+        assert isinstance(chat_tool, ChatTool)
+        prepared = await chat_tool.prepare_chat(
+            last_message_dict.get("content", ""),
+            context,
+            rag_enabled=rag_enabled,
+        )
+
+        response_buffer: List[str] = []
+        try:
+            async for chunk in chat_tool.stream_chunks(prepared):
+                response_buffer.append(chunk)
+                yield {"type": "chunk", "chunk": chunk}
+        except Exception as exc:
+            logger.exception("Streaming chat failed")
+            yield {"type": "error", "error": str(exc)}
+            return
+
+        final_response = "".join(response_buffer)
+        completion = chat_tool.finalize_stream(prepared, final_response)
+        yield {
+            "type": "complete",
+            "payload": {
+                "success": completion.get("success", False),
+                "content": completion.get("response", ""),
+                "citations": completion.get("citations", []),
+                "metadata": {
+                    key: value
+                    for key, value in completion.items()
+                    if key not in {"success", "response", "citations"}
+                },
+            },
+        }
+
+    def get_available_tools(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            ToolType.DOCUMENT_SEARCH.value: {
+                "name": ToolType.DOCUMENT_SEARCH.value,
+                "description": "Search documents by title or filename.",
+                "parameters": {
+                    "query": {"type": "string"},
+                    "department": {"type": "string", "optional": True},
+                    "limit": {"type": "integer", "default": 10},
+                },
+            },
+            ToolType.VECTOR_SEARCH.value: {
+                "name": ToolType.VECTOR_SEARCH.value,
+                "description": "Semantic similarity search over document chunks.",
+                "parameters": {
+                    "query": {"type": "string"},
+                    "department": {"type": "string", "optional": True},
+                    "limit": {"type": "integer", "default": 5},
+                },
+            },
+            ToolType.KEYWORD_SEARCH.value: {
+                "name": ToolType.KEYWORD_SEARCH.value,
+                "description": "Keyword search through indexed chunks.",
+                "parameters": {
+                    "query": {"type": "string"},
+                    "department": {"type": "string", "optional": True},
+                    "limit": {"type": "integer", "default": 10},
+                },
+            },
+            ToolType.HYBRID_SEARCH.value: {
+                "name": ToolType.HYBRID_SEARCH.value,
+                "description": "Hybrid combination of semantic and keyword search.",
+                "parameters": {
+                    "query": {"type": "string"},
+                    "department": {"type": "string", "optional": True},
+                    "limit": {"type": "integer", "default": 10},
+                    "semantic_weight": {"type": "number", "default": 0.7},
+                    "keyword_weight": {"type": "number", "default": 0.3},
+                },
+            },
+            ToolType.RAG_DOC_RESOURCE.value: {
+                "name": ToolType.RAG_DOC_RESOURCE.value,
+                "description": "Fetch a document or chunk via rag:// identifier.",
+                "parameters": {
+                    "document_id": {"type": "string"},
+                    "chunk_id": {"type": "string", "optional": True},
+                },
+            },
+            ToolType.CHAT.value: {
+                "name": ToolType.CHAT.value,
+                "description": "Chat with the Pyramid assistant using RAG.",
+                "parameters": {
+                    "message": {"type": "string"},
+                    "rag_enabled": {"type": "boolean", "default": True},
+                },
+            },
+        }
+
+    def clear_context(self, session_id: str) -> None:
+        """Stateless gateway retains no server-side session context."""
+        return None
+
+    def get_context_summary(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Stateless gateway does not maintain in-memory context summaries."""
+        return None
+
+
+_mcp_gateway_instance: Optional[MCPGateway] = None
+
+
+def get_mcp_gateway(db: Session = None) -> Optional[MCPGateway]:
+    global _mcp_gateway_instance
+    if _mcp_gateway_instance is None and db is not None:
+        _mcp_gateway_instance = MCPGateway(db)
+    return _mcp_gateway_instance
+
+
+async def initialize_mcp_gateway(db: Session) -> MCPGateway:
+    global _mcp_gateway_instance
+    _mcp_gateway_instance = MCPGateway(db)
+    logger.info("MCP gateway initialised")
+    return _mcp_gateway_instance

@@ -93,7 +93,8 @@ Some error logs from previous sessions still appear but are from before fixes we
 
 All configuration moved from centralized config to environment variables:
 - `DATABASE_URL`: PostgreSQL connection string
-- `SECRET_KEY`: JWT secret key
+- `SECRET_KEY`: JWT secret key (configure via env; otherwise generated and stored where `SECRET_KEY_FILE` points)
+- `SECRET_KEY_FILE`: Optional persisted secret key location
 - `OLLAMA_BASE_URL`: http://ollama:11434
 - `OLLAMA_MODEL`: qwen2.5:7b
 - `EMBEDDING_MODEL`: paraphrase-multilingual-MiniLM-L12-v2

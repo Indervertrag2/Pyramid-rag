@@ -10,6 +10,7 @@ from PIL import Image
 import chardet
 import json
 from datetime import datetime
+from app.utils.file_security import sanitize_filename, secure_join
 from sqlalchemy.orm import Session
 
 from app.models import Document, DocumentChunk, FileType
@@ -34,8 +35,9 @@ class DocumentProcessor:
     async def save_file(self, file) -> str:
         """Save uploaded file to disk"""
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}_{file.filename}"
-        file_path = self.upload_dir / filename
+        safe_original = sanitize_filename(file.filename or "upload")
+        filename = f"{timestamp}_{safe_original}"
+        file_path = secure_join(self.upload_dir, filename, fallback_prefix="upload")
 
         content = await file.read()
         with open(file_path, "wb") as f:

@@ -1,6 +1,0 @@
-TESTDOKUMENT INHALT:
-    Dies ist ein Testdokument mit spezifischem Inhalt.
-    Testwort: PYRAMIDTEST123
-    Testzahl: 424242
-    Testdatum: 2024-12-24
-    

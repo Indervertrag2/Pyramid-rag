@@ -1,161 +1,39 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+import Sidebar from '../components/sidebar/Sidebar';
+import ChatHeader from '../components/chat/ChatHeader';
+import MessageList from '../components/chat/MessageList';
+import ChatInput from '../components/chat/ChatInput';
+import type { ChatFolder, ChatSession, DocumentPreviewState, Message, UploadOutcome, ConversationDocument, UploadedDocumentInfo } from '../types';
 
 import { mcpClient } from '../services/MCPClient';
+import type { MCPMessage } from '../services/MCPClient';
+import { chatApi, type ApiChatMessage } from '../services/chatApi';
 
 
-import { normalizeUploadedDocument, buildUploadAcknowledgement, UploadedDocumentInfo, ConversationDocument, normalizeConversationDocuments } from '../utils/chatDocuments';
+import { normalizeUploadedDocument, buildUploadAcknowledgement, normalizeConversationDocuments } from '../utils/chatDocuments';
 
 
 import {
-
-
   Box,
-
-
-  IconButton,
-
-
-  TextField,
-
-
   Typography,
-
-
-  List,
-
-
-  ListItem,
-
-
-  ListItemButton,
-
-
-  ListItemText,
-
-
-  Drawer,
-
-
-  Avatar,
-
-
-  Menu,
-
-
-  MenuItem,
-
-
   Button,
-
-
-  Divider,
-
-
-  Chip,
-
-
   CircularProgress,
-
-
   Paper,
-
-
-  Tooltip,
-
-
-  LinearProgress,
-
-
   Dialog,
-
-
   DialogTitle,
-
-
   DialogContent,
-
-
   DialogActions,
-
-
-  Alert
-
-
+  Alert,
+  TextField,
+  Chip
 } from '@mui/material';
-
-
-import {
-
-
-  Add as AddIcon,
-
-
-  Send as SendIcon,
-
-
-  Menu as MenuIcon,
-
-
-  Logout as LogoutIcon,
-
-
-  Dashboard as DashboardIcon,
-
-
-  AttachFile as AttachFileIcon,
-
-
-  Delete as DeleteIcon,
-
-
-  Edit as EditIcon,
-
-
-  ContentCopy as CopyIcon,
-
-
-  Folder as FolderIcon,
-
-
-  ExpandMore as ExpandMoreIcon,
-
-
-  ExpandLess as ExpandLessIcon,
-
-
-  Search as SearchIcon,
-
-
-  CreateNewFolder as CreateFolderIcon,
-
-
-  Business as CompanyIcon,
-
-
-  Chat as ChatOnlyIcon,
-
-
-  Brightness4 as DarkModeIcon,
-
-
-  Brightness7 as LightModeIcon,
-
-
-  Public as PublicIcon,
-
-
-  Group as GroupIcon,
-
-
-  InsertDriveFile as InsertDriveFileIcon
-
-
-} from '@mui/icons-material';
 
 
 import { useNavigate } from 'react-router-dom';
 
+
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 
 import { useAuth } from '../contexts/AuthContext';
 
@@ -166,93 +44,8 @@ import { useTheme } from '../contexts/ThemeContext';
 
 
 
-interface Message {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp: Date;
-  attachments?: File[];
-  citations?: ConversationDocument[];
-}>;
-
-
-}
-
-
-
-
-
-interface ChatSession {
-
-
-  id: string;
-
-
-  title: string;
-
-
-  messages: Message[];
-
-
-  createdAt: Date;
-
-
-  updatedAt: Date;
-
-
-  folderId?: string;
-
-
-  uploadedDocuments?: any[]; // Store uploaded documents for the session
-
-
-  isTemporary?: boolean; // Indicates if this is a temporary chat (30 day expiry)
-
-
-}
-
-
-
-
-
-interface ChatFolder {
-
-
-  id: string;
-
-
-  name: string;
-
-
-  color?: string;
-
-
-  expanded: boolean;
-
-
-}
-
-
-
-
-
-type UploadOutcome = {
-  documents: UploadedDocumentInfo[];
-  notices: string[];
-};
-
-interface DocumentPreviewState {
-  id: string;
-  title: string;
-  scope: 'GLOBAL' | 'CHAT';
-  source: 'chat' | 'knowledge_base';
-  content?: string;
-  contentPreview?: string;
-  mimeType?: string;
-  createdAt?: string;
-  updatedAt?: string;
-  chunkId?: string;
-}
+const CONTEXT_WINDOW_SIZE = 5;
+const AUTO_SCROLL_THRESHOLD = 120;
 
 const ChatGPT: React.FC = () => {
 
@@ -268,6 +61,9 @@ const ChatGPT: React.FC = () => {
 
 
   const [messages, setMessages] = useState<Message[]>([]);
+
+
+  const [lastContextDocuments, setLastContextDocuments] = useState<ConversationDocument[]>([]);
 
 
   const [inputMessage, setInputMessage] = useState('');
@@ -288,7 +84,6 @@ const ChatGPT: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
 
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
 
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
@@ -335,12 +130,22 @@ const ChatGPT: React.FC = () => {
 
   const [newFolderName, setNewFolderName] = useState<string>('');
 
+  // Publish dialog state
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [publishTitle, setPublishTitle] = useState('');
+  const [publishDescription, setPublishDescription] = useState('');
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishSuccess, setPublishSuccess] = useState(false);
+
 
 
 
 
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
-
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollRef = useRef(true);
+  const activeHistoryRequestRef = useRef<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -366,7 +171,7 @@ const ChatGPT: React.FC = () => {
   // Check if user is admin
 
 
-  const isAdmin = user?.is_superuser || user?.roles?.includes('admin');
+  const isAdmin = Boolean(user?.is_superuser || user?.roles?.includes('admin'));
 
 
 
@@ -407,322 +212,128 @@ const ChatGPT: React.FC = () => {
 
   }, []);
 
-
-
-
-
-  // Handle page unload/reload
-
-
+  // Load sessions from database on mount
   useEffect(() => {
-
-
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-
-
-      if (isUploadingRef.current) {
-
-
-        // Try to abort uploads gracefully
-
-
-        cleanupUploads();
-
-
-
-
-
-        // Show warning to user (modern browsers may not show custom message)
-
-
-        e.preventDefault();
-
-
-        e.returnValue = 'Upload in Bearbeitung. Moechten Sie wirklich fortfahren?';
-
-
-        return e.returnValue;
-
-
-      }
-
-
-    };
-
-
-
-
-
-    // Add event listener
-
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-
-
-
-
-    // Cleanup on unmount
-
-
-    return () => {
-
-
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-
-
-      cleanupUploads();
-
-
-    };
-
-
-  }, [cleanupUploads]);
-
-
-
-
-
-  useEffect(() => {
-
-
-    // Load sessions and folders from localStorage
-
-
-    const savedSessions = localStorage.getItem('chatSessions');
-
-
-    const savedFolders = localStorage.getItem('chatFolders');
-
-
-
-
-
-    if (savedFolders) {
-
-
-      setFolders(JSON.parse(savedFolders));
-
-
-    } else {
-
-
-      // Create default folder
-
-
-      const defaultFolder = {
-
-
-        id: 'default',
-
-
-        name: 'Chats',
-
-
-        expanded: true
-
-
-      };
-
-
-      setFolders([defaultFolder]);
-
-
-      localStorage.setItem('chatFolders', JSON.stringify([defaultFolder]));
-
-
-    }
-
-
-
-
-
-    if (savedSessions) {
-
-
+    const loadSessionsFromDatabase = async () => {
       try {
+        const apiSessions = await chatApi.getSessions();
+        const loadedSessions: ChatSession[] = apiSessions.map(s => ({
+          id: s.id,
+          title: s.title,
+          folderId: s.folder_path || 'default',
+          messages: [], // Messages loaded on demand when session is selected
+          createdAt: new Date(s.created_at),
+          updatedAt: new Date(s.updated_at),
+          uploadedDocuments: [],
+          isTemporary: s.chat_type === 'TEMPORARY'
+        }));
+        setSessions(loadedSessions);
 
+        // Load most recent session if exists
+        if (loadedSessions.length > 0 && !currentSessionId) {
+          const mostRecent = loadedSessions[0];
+          setCurrentSessionId(mostRecent.id);
 
-        const parsed = JSON.parse(savedSessions) as ChatSession[];
-
-
-        const normalizedSessions = parsed.map(session => {
-
-
-          const normalizedDocuments: UploadedDocumentInfo[] = (session.uploadedDocuments || []).map((doc: any) =>
-
-
-            normalizeUploadedDocument(doc)
-
-
-          );
-
-
-
-
-
-          return {
-
-
-            ...session,
-
-
-            createdAt: session.createdAt ? new Date(session.createdAt as any) : new Date(),
-
-
-            updatedAt: session.updatedAt ? new Date(session.updatedAt as any) : new Date(),
-
-
-            messages: (session.messages || []).map(message => ({
-
-
-              ...message,
-
-
-              timestamp: message.timestamp ? new Date(message.timestamp as any) : new Date()
-
-
-            })),
-
-
-            uploadedDocuments: normalizedDocuments
-
-
-          };
-
-
-        });
-
-
-
-
-
-        setSessions(normalizedSessions);
-
-
-        if (normalizedSessions.length > 0) {
-
-
-          setCurrentSessionId(normalizedSessions[0].id);
-
-
-          setMessages(normalizedSessions[0].messages || []);
-
-
+          // Load messages for most recent session
+          try {
+            const apiMessages = await chatApi.getSessionMessages(mostRecent.id);
+            const loadedMessages: Message[] = apiMessages.map(m => ({
+              id: m.id,
+              role: m.role as 'user' | 'assistant',
+              content: m.content,
+              timestamp: new Date(m.created_at),
+              citations: normalizeConversationDocuments(m.meta_data?.retrieved_documents || [])
+            }));
+            setMessages(loadedMessages);
+          } catch (error) {
+            console.error('Failed to load messages:', error);
+          }
         }
-
-
       } catch (error) {
-
-
-        console.error('Failed to parse saved chat sessions', error);
-
-
-        createNewSession();
-
-
+        console.error('Failed to load sessions from database:', error);
+        // Create initial session if loading fails
+        createNewSession('default', false);
       }
+    };
 
-
-    } else {
-
-
-      createNewSession();
-
-
-    }
-
-
+    loadSessionsFromDatabase();
   }, []);
 
-
-
-
-
   useEffect(() => {
-
-
-    scrollToBottom();
-
-
+    if (!autoScrollRef.current) {
+      return;
+    }
+    const behavior: ScrollBehavior = messages.length > 20 ? 'auto' : 'smooth';
+    scrollToBottom(behavior);
   }, [messages]);
 
-
-
-
-
-  const scrollToBottom = () => {
-
-
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-
-
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior, block: 'end' });
+    }
   };
 
-
-
-
-
-  const createNewSession = (folderId: string = 'default', isTemporary: boolean = false): ChatSession => {
-
-
-    const newSession: ChatSession = {
-
-
-      id: `session-${Date.now()}`,
-
-
-      title: isTemporary ? 'Temporarer Chat' : 'Neuer Chat',
-
-
-      messages: [],
-
-
-      createdAt: new Date(),
-
-
-      updatedAt: new Date(),
-
-
-      folderId,
-
-
-      uploadedDocuments: [],
-
-
-      isTemporary
-
-
+  useEffect(() => {
+    return () => {
+      cleanupUploads();
     };
+  }, [cleanupUploads]);
 
+  const handleMessagesScroll = () => {
+    const container = messagesContainerRef.current;
+    if (!container) {
+      return;
+    }
+    const distanceToBottom = container.scrollHeight - (container.scrollTop + container.clientHeight);
+    autoScrollRef.current = distanceToBottom <= AUTO_SCROLL_THRESHOLD;
+  };
 
+  const createNewSession = async (folderId: string = 'default', isTemporary: boolean = false): Promise<ChatSession> => {
+    try {
+      // Create session in database
+      const apiSession = await chatApi.createSession({
+        title: isTemporary ? 'Temporarer Chat' : 'Neuer Chat',
+        folder_path: folderId === 'default' ? null : folderId,
+        is_temporary: isTemporary
+      });
 
+      // Convert to frontend format
+      const newSession: ChatSession = {
+        id: apiSession.id,
+        title: apiSession.title,
+        folderId: apiSession.folder_path || 'default',
+        messages: [],
+        createdAt: new Date(apiSession.created_at),
+        updatedAt: new Date(apiSession.updated_at),
+        uploadedDocuments: [],
+        isTemporary: apiSession.chat_type === 'TEMPORARY'
+      };
 
+      setSessions(prev => [newSession, ...prev]);
+      setCurrentSessionId(newSession.id);
+      setMessages([]);
+      setLastContextDocuments([]);
 
-    setSessions(prev => {
-
-
-      const updated = [newSession, ...prev];
-
-
-      localStorage.setItem('chatSessions', JSON.stringify(updated));
-
-
-      return updated;
-
-
-    });
-
-
-    setCurrentSessionId(newSession.id);
-
-
-    setMessages([]);
-
-
-    return newSession;
-
-
+      return newSession;
+    } catch (error) {
+      console.error('Failed to create session in database:', error);
+      // Fallback to local-only session
+      const newSession: ChatSession = {
+        id: `session-${Date.now()}`,
+        title: isTemporary ? 'Temporarer Chat' : 'Neuer Chat',
+        messages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        folderId,
+        uploadedDocuments: [],
+        isTemporary
+      };
+      setSessions(prev => [newSession, ...prev]);
+      setCurrentSessionId(newSession.id);
+      setMessages([]);
+      setLastContextDocuments([]);
+      return newSession;
+    }
   };
 
 
@@ -756,7 +367,6 @@ const ChatGPT: React.FC = () => {
     setFolders(updatedFolders);
 
 
-    localStorage.setItem('chatFolders', JSON.stringify(updatedFolders));
 
 
 
@@ -792,11 +402,32 @@ const ChatGPT: React.FC = () => {
     setFolders(updatedFolders);
 
 
-    localStorage.setItem('chatFolders', JSON.stringify(updatedFolders));
 
 
   };
 
+
+
+
+
+  const moveSessionToFolder = async (sessionId: string, folderId: string | null) => {
+    try {
+      // Update in database
+      await chatApi.updateSession(sessionId, {
+        folder_path: folderId === 'default' || folderId === null ? null : folderId
+      });
+
+      // Update local state
+      const updatedSessions = sessions.map(session =>
+        session.id === sessionId
+          ? { ...session, folderId: folderId || 'default' }
+          : session
+      );
+      setSessions(updatedSessions);
+    } catch (error) {
+      console.error('Failed to update session folder:', error);
+    }
+  };
 
 
 
@@ -816,7 +447,6 @@ const ChatGPT: React.FC = () => {
     setSessions(updatedSessions);
 
 
-    localStorage.setItem('chatSessions', JSON.stringify(updatedSessions));
 
 
     setEditingTitleId('');
@@ -843,7 +473,6 @@ const ChatGPT: React.FC = () => {
     setFolders(updatedFolders);
 
 
-    localStorage.setItem('chatFolders', JSON.stringify(updatedFolders));
 
 
     setEditingFolderId('');
@@ -873,7 +502,6 @@ const ChatGPT: React.FC = () => {
   //   setSessions(updatedSessions);
 
 
-  //   localStorage.setItem('chatSessions', JSON.stringify(updatedSessions));
 
 
   // };
@@ -906,7 +534,6 @@ const ChatGPT: React.FC = () => {
     setSessions(updatedSessions);
 
 
-    localStorage.setItem('chatSessions', JSON.stringify(updatedSessions));
 
 
 
@@ -921,7 +548,6 @@ const ChatGPT: React.FC = () => {
     setFolders(updatedFolders);
 
 
-    localStorage.setItem('chatFolders', JSON.stringify(updatedFolders));
 
 
   };
@@ -930,66 +556,182 @@ const ChatGPT: React.FC = () => {
 
 
 
-  const selectSession = (sessionId: string) => {
 
+const selectSession = async (sessionId: string, fallbackSession?: ChatSession) => {
+  autoScrollRef.current = true;
+  setCurrentSessionId(sessionId);
 
-    const session = sessions.find(s => s.id === sessionId);
+  const sessionFromState = sessions.find(s => s.id === sessionId);
+  const session = sessionFromState ?? fallbackSession ?? null;
 
+  if (session?.messages && session.messages.length > 0) {
+    setMessages(session.messages);
+    const localAssistant = [...session.messages].reverse().find(msg => msg.role === 'assistant' && Array.isArray(msg.citations) && msg.citations.length > 0);
+    if (localAssistant?.citations) {
+      setLastContextDocuments(localAssistant.citations);
+    }
+  } else {
+    setMessages([]);
+  }
 
-    if (session) {
+  activeHistoryRequestRef.current = sessionId;
 
-
-      setCurrentSessionId(sessionId);
-
-
-      setMessages(session.messages || []);
-
-
+  try {
+    const apiMessages: ApiChatMessage[] = await chatApi.getSessionMessages(sessionId);
+    if (activeHistoryRequestRef.current !== sessionId) {
+      return;
     }
 
+    const uploadedDocMap = new Map<string, UploadedDocumentInfo>();
 
+    const convertedMessages: Message[] = apiMessages.map(apiMsg => {
+      const rawDocuments = Array.isArray(apiMsg.meta_data?.retrieved_documents) ? apiMsg.meta_data.retrieved_documents : [];
+      rawDocuments.forEach(doc => {
+        const scope = doc?.scope === 'GLOBAL' ? 'GLOBAL' : 'CHAT';
+        if (scope !== 'CHAT') {
+          return;
+        }
+        const normalized = normalizeUploadedDocument(doc);
+        const key = String(normalized.documentId ?? normalized.id);
+        if (!uploadedDocMap.has(key)) {
+          uploadedDocMap.set(key, normalized);
+        }
+      });
+
+      const normalizedRole: Message['role'] = apiMsg.role === 'assistant'
+        ? 'assistant'
+        : apiMsg.role === 'system'
+          ? 'system'
+          : 'user';
+
+      return {
+        id: apiMsg.id,
+        role: normalizedRole,
+        content: apiMsg.content ?? '',
+        timestamp: new Date(apiMsg.created_at),
+        citations: normalizeConversationDocuments(apiMsg.meta_data?.retrieved_documents ?? []),
+      };
+    });
+
+    const mergedDocumentsMap = new Map<string, UploadedDocumentInfo>();
+    (session?.uploadedDocuments ?? []).forEach(doc => {
+      const key = String(doc.documentId ?? doc.id);
+      mergedDocumentsMap.set(key, doc);
+    });
+    uploadedDocMap.forEach((doc, key) => {
+      if (!mergedDocumentsMap.has(key)) {
+        mergedDocumentsMap.set(key, doc);
+      }
+    });
+    const mergedDocuments = Array.from(mergedDocumentsMap.values());
+
+    setMessages(convertedMessages);
+    const lastAssistantWithCitations = [...convertedMessages].reverse().find(msg => msg.role === 'assistant' && Array.isArray(msg.citations) && msg.citations.length > 0);
+    setLastContextDocuments(lastAssistantWithCitations?.citations ?? []);
+    setSessions(prev => prev.map(s =>
+      s.id === sessionId
+        ? { ...s, messages: convertedMessages, uploadedDocuments: mergedDocuments }
+        : s
+    ));
+  } catch (error) {
+    if (activeHistoryRequestRef.current === sessionId) {
+      console.error('Failed to load messages from DB:', error);
+      if (session?.messages) {
+        setMessages(session.messages);
+      }
+    }
+  } finally {
+    if (activeHistoryRequestRef.current === sessionId) {
+      activeHistoryRequestRef.current = null;
+    }
+  }
+};
+  const deleteSession = async (sessionId: string) => {
+    try {
+      // Delete from database
+      await chatApi.deleteSession(sessionId);
+
+      // Update local state
+      const updatedSessions = sessions.filter(s => s.id !== sessionId);
+      setSessions(updatedSessions);
+
+      if (currentSessionId === sessionId) {
+        if (updatedSessions.length > 0) {
+          await selectSession(updatedSessions[0].id, updatedSessions[0]);
+        } else {
+          createNewSession();
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+    }
   };
 
+  // Publish session handlers
+  const handleOpenPublishDialog = () => {
+    if (currentSession) {
+      setPublishTitle(currentSession.title || 'Chat Session');
+      setPublishDescription('');
+      setPublishError(null);
+      setPublishSuccess(false);
+      setPublishDialogOpen(true);
+    }
+  };
 
+  const handleClosePublishDialog = () => {
+    setPublishDialogOpen(false);
+    setPublishTitle('');
+    setPublishDescription('');
+    setPublishError(null);
+    setPublishSuccess(false);
+  };
 
+  const handlePublishSession = async () => {
+    if (!currentSessionId || !publishTitle.trim()) {
+      setPublishError('Bitte geben Sie einen Titel ein');
+      return;
+    }
 
+    setPublishing(true);
+    setPublishError(null);
 
-  const deleteSession = (sessionId: string) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(
+        `http://localhost:18000/api/v1/chat/sessions/${currentSessionId}/publish`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            title: publishTitle.trim(),
+            description: publishDescription.trim() || undefined,
+          }),
+        }
+      );
 
-
-    const updatedSessions = sessions.filter(s => s.id !== sessionId);
-
-
-    setSessions(updatedSessions);
-
-
-    localStorage.setItem('chatSessions', JSON.stringify(updatedSessions));
-
-
-
-
-
-    if (currentSessionId === sessionId) {
-
-
-      if (updatedSessions.length > 0) {
-
-
-        selectSession(updatedSessions[0].id);
-
-
-      } else {
-
-
-        createNewSession();
-
-
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Fehler beim VerÃƒÂ¶ffentlichen');
       }
 
+      await response.json();
+      setPublishSuccess(true);
 
+      // Close dialog after 1.5 seconds
+      setTimeout(() => {
+        handleClosePublishDialog();
+      }, 1500);
+    } catch (error) {
+      console.error('Error publishing session:', error);
+      setPublishError(
+        error instanceof Error ? error.message : 'Fehler beim VerÃƒÂ¶ffentlichen der Sitzung'
+      );
+    } finally {
+      setPublishing(false);
     }
-
-
   };
 
 
@@ -1009,9 +751,11 @@ const ChatGPT: React.FC = () => {
     return;
   }
 
+  autoScrollRef.current = true;
+
   let activeSessionId = currentSessionId;
   if (!activeSessionId) {
-    const session = createNewSession();
+    const session = await createNewSession();
     activeSessionId = session.id;
   }
 
@@ -1039,7 +783,6 @@ const ChatGPT: React.FC = () => {
           ? { ...session, title, updatedAt: new Date() }
           : session
       );
-      localStorage.setItem('chatSessions', JSON.stringify(updated));
       return updated;
     });
   }
@@ -1062,7 +805,6 @@ const ChatGPT: React.FC = () => {
           ? { ...session, uploadedDocuments: docsForStorage, updatedAt: new Date() }
           : session
       );
-      localStorage.setItem('chatSessions', JSON.stringify(updated));
       return updated;
     });
   }
@@ -1092,7 +834,6 @@ const ChatGPT: React.FC = () => {
             updatedAt: new Date(),
           };
         });
-        localStorage.setItem('chatSessions', JSON.stringify(updated));
         return updated;
       });
     }
@@ -1103,19 +844,23 @@ const ChatGPT: React.FC = () => {
     return;
   }
 
-  const documentContext = sessionDocuments.length > 0
-    ? sessionDocuments
-        .map(doc => {
-          const body = doc.content || 'Inhalt nicht verfuegbar';
-          const origin = doc.scope === 'GLOBAL' ? 'Firmendatenbank' : 'Chat-Kontext';
-          return `\n\n--- Datei (${origin}): ${doc.title} ---\n${body}\n--- Ende Datei ---`;
-        })
-        .join('')
-    : '';
+  const historySource = [...messages];
+  if (userMessage) {
+    historySource.push(userMessage);
+  }
+  const conversationHistory: MCPMessage[] = historySource
+    .slice(-CONTEXT_WINDOW_SIZE)
+    .map(msg => ({
+      role: msg.role,
+      content: msg.content,
+    }));
 
-  const chatContent = sessionDocuments.length > 0
-    ? `${trimmedMessage}\n\nVerfuegbare Dateien:${documentContext}`
-    : trimmedMessage;
+  if (conversationHistory.length === 0) {
+    conversationHistory.push({
+      role: 'user',
+      content: trimmedMessage,
+    });
+  }
 
   const assistantTimestamp = new Date();
   const assistantMessageId = `msg-${assistantTimestamp.getTime()}-assistant`;
@@ -1144,7 +889,7 @@ const ChatGPT: React.FC = () => {
   try {
     const department = user?.primary_department || 'UNKNOWN';
 
-    await mcpClient.streamMessage(chatContent, {
+    await mcpClient.streamMessage(conversationHistory, {
       tools: searchEnabled ? ['chat', 'hybrid_search'] : ['chat'],
       rag_enabled: searchEnabled,
       session_id: activeSessionId,
@@ -1162,16 +907,21 @@ const ChatGPT: React.FC = () => {
         });
       },
       onDone: (payload: any) => {
-        references = normalizeConversationDocuments(payload?.documents ?? []);
-        if (references.length > 0) {
-          setMessages(prev => prev.map(message =>
-            message.id === assistantMessageId
-              ? { ...message, citations: references }
-              : message
-          ));
-        }
+        const rawDocuments = Array.isArray(payload?.citations) && payload.citations.length > 0
+          ? payload.citations
+          : Array.isArray(payload?.documents)
+            ? payload.documents
+            : [];
+        references = normalizeConversationDocuments(rawDocuments);
+        setLastContextDocuments(references);
+        setMessages(prev => prev.map(message =>
+          message.id === assistantMessageId
+            ? { ...message, citations: references }
+            : message
+        ));
       },
       onError: (error: string) => {
+        setLastContextDocuments([]);
         setMessages(prev => prev.map(message =>
           message.id === assistantMessageId
             ? { ...message, content: `Error: ${error}` }
@@ -1206,7 +956,6 @@ const ChatGPT: React.FC = () => {
             updatedAt: new Date(),
           };
         });
-        localStorage.setItem('chatSessions', JSON.stringify(updated));
         return updated;
       });
     }
@@ -1275,7 +1024,7 @@ const ChatGPT: React.FC = () => {
     if (!activeSessionId) {
 
 
-      const session = createNewSession();
+      const session = await createNewSession();
 
 
       activeSessionId = session.id;
@@ -1459,29 +1208,44 @@ const ChatGPT: React.FC = () => {
 
 
         if (documentData.duplicate) {
+          // Hole die existing_document_id aus der Response
+          const existingDocId = documentData.existing_document_id;
 
+          if (existingDocId) {
+            // Erstelle Document-Info mit der RICHTIGEN ID und Content vom Backend
+            const duplicateDoc = normalizeUploadedDocument({
+              id: existingDocId,
+              document_id: existingDocId,
+              filename: documentData.filename || file.name,
+              original_filename: documentData.original_filename || file.name,
+              title: documentData.title || documentData.filename || file.name,
+              content: documentData.content,  // Ã¢Å“â€¦ Content vom Backend!
+              contentLength: documentData.content_length,
+              mimeType: documentData.mime_type,
+              fileType: documentData.file_type,
+              scope: 'GLOBAL',  // Duplikate sind immer GLOBAL
+              metadata: documentData.meta_data,
+              created_at: documentData.created_at
+            });
+
+            // PrÃƒÂ¼fe ob bereits im aktuellen Session-Kontext
+            const alreadyInSession = currentSessionDocuments.some(
+              doc => doc.documentId === existingDocId
+            );
+
+            if (!alreadyInSession) {
+              uploadedDocuments.push(duplicateDoc);
+            }
+          }
 
           const duplicateMessage =
-
-
             typeof documentData.message === 'string'
-
-
               ? documentData.message
-
-
-              : `Upload von ${file.name} uebersprungen (bereits vorhanden)`;
-
+              : `${file.name} (bereits vorhanden, wird verwendet)`;
 
           setUploadSuccess(prev => [...prev, duplicateMessage]);
-
-
           notices.push(duplicateMessage);
-
-
           continue;
-
-
         }
 
 
@@ -1662,10 +1426,6 @@ const ChatGPT: React.FC = () => {
 
 
 
-  const handleFileSelect
-
-
-  };
 
 
 
@@ -1775,6 +1535,30 @@ const ChatGPT: React.FC = () => {
 
 
 
+  const handleSidebarToggle = () => {
+    setSidebarOpen(prev => !prev);
+  };
+
+  const handleRemoveUploadedFile = (index: number) => {
+    setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleInputChange = (value: string) => {
+    setInputMessage(value);
+  };
+
+  const handleToggleSearch = () => {
+    setSearchEnabled(prev => !prev);
+  };
+
+  const handleToggleSaveToDatabase = () => {
+    setSaveToDatabase(prev => !prev);
+  };
+
+  const handleToggleDocumentVisibility = () => {
+    setDocumentVisibility(prev => (prev === 'all' ? 'department' : 'all'));
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
 
 
@@ -1793,7 +1577,7 @@ const ChatGPT: React.FC = () => {
 
 
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLDivElement>) => {
 
 
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1842,2407 +1626,211 @@ const ChatGPT: React.FC = () => {
 
 
   return (
-
-
     <Box sx={{ display: 'flex', height: '100vh', bgcolor: darkMode ? '#1e1e1e' : '#fafafa' }}>
-
-
-      {/* Sidebar */}
-
-
-      <Drawer
-
-
-        variant="persistent"
-
-
-        anchor="left"
-
-
+      <Sidebar
         open={sidebarOpen}
-
-
-        sx={{
-
-
-          width: sidebarOpen ? drawerWidth : 0,
-
-
-          flexShrink: 0,
-
-
-          '& .MuiDrawer-paper': {
-
-
-            width: drawerWidth,
-
-
-            boxSizing: 'border-box',
-
-
-            bgcolor: darkMode ? '#1a1a1a' : '#ffffff',
-
-
-            borderRight: darkMode ? '1px solid #2d2d2d' : '1px solid #e5e5e5'
-
-
-          }
-
-
-        }}
-
-
-      >
-
-
-        <Box sx={{ p: 2 }}>
-
-
-          <Typography variant="h6" sx={{ fontWeight: 400, fontSize: '1.1rem', color: 'text.secondary' }}>
-
-
-            Pyramid RAG
-
-
-          </Typography>
-
-
-        </Box>
-
-
-
-
-
-        <Box sx={{ px: 2, pb: 2 }}>
-
-
-          <Button
-
-
-            fullWidth
-
-
-            variant="contained"
-
-
-            startIcon={<AddIcon />}
-
-
-            onClick={() => createNewSession('default', false)}
-
-
-            sx={{
-
-
-              justifyContent: 'flex-start',
-
-
-              textTransform: 'none',
-
-
-              bgcolor: '#003d7a',
-
-
-              color: 'white',
-
-
-              borderRadius: '12px',
-
-
-              py: 1,
-
-
-              mb: 1,
-
-
-              fontSize: '0.9rem',
-
-
-              '&:hover': {
-
-
-                bgcolor: '#002855'
-
-
-              }
-
-
-            }}
-
-
-          >
-
-
-            Neuer Chat
-
-
-          </Button>
-
-
-          <Button
-
-
-            fullWidth
-
-
-            variant="outlined"
-
-
-            startIcon={<AddIcon />}
-
-
-            onClick={() => createNewSession('default', true)}
-
-
-            sx={{
-
-
-              justifyContent: 'flex-start',
-
-
-              textTransform: 'none',
-
-
-              borderColor: '#d9027d',
-
-
-              color: '#d9027d',
-
-
-              borderRadius: '12px',
-
-
-              py: 0.75,
-
-
-              mb: 1,
-
-
-              fontSize: '0.85rem',
-
-
-              '&:hover': {
-
-
-                borderColor: '#f57c00',
-
-
-                bgcolor: 'rgba(255, 152, 0, 0.08)'
-
-
-              }
-
-
-            }}
-
-
-          >
-
-
-            Temporarer Chat (30 Tage)
-
-
-          </Button>
-
-
-          <Button
-
-
-            fullWidth
-
-
-            variant="text"
-
-
-            startIcon={<CreateFolderIcon />}
-
-
-            onClick={createNewFolder}
-
-
-            sx={{
-
-
-              justifyContent: 'flex-start',
-
-
-              textTransform: 'none',
-
-
-              color: 'text.secondary',
-
-
-              borderRadius: '12px',
-
-
-              py: 0.5,
-
-
-              fontSize: '0.9rem',
-
-
-              '&:hover': {
-
-
-                bgcolor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'
-
-
-              }
-
-
-            }}
-
-
-          >
-
-
-            Neuer Ordner
-
-
-          </Button>
-
-
-        </Box>
-
-
-
-
-
-        <Divider sx={{ mx: 1 }} />
-
-
-
-
-
-        <List sx={{ flexGrow: 1, overflow: 'auto', px: 1, py: 1 }}>
-
-
-          {folders.map((folder) => (
-
-
-            <Box key={folder.id} sx={{ mb: 1 }}>
-
-
-              <ListItem disablePadding>
-
-
-                <ListItemButton
-
-
-                  onClick={() => toggleFolder(folder.id)}
-
-
-                  sx={{
-
-
-                    borderRadius: '8px',
-
-
-                    py: 0.5,
-
-
-                    minHeight: 32,
-
-
-                    '&:hover': {
-
-
-                      bgcolor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'
-
-
-                    }
-
-
-                  }}
-
-
-                >
-
-
-                  <IconButton size="small" sx={{ p: 0, mr: 1 }}>
-
-
-                    {folder.expanded ? <ExpandMoreIcon fontSize="small" /> : <ExpandLessIcon fontSize="small" />}
-
-
-                  </IconButton>
-
-
-                  <FolderIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
-
-
-
-
-
-                  {editingFolderId === folder.id ? (
-
-
-                    <TextField
-
-
-                      size="small"
-
-
-                      value={newFolderName}
-
-
-                      onChange={(e) => setNewFolderName(e.target.value)}
-
-
-                      onBlur={() => saveFolderName(folder.id)}
-
-
-                      onKeyPress={(e) => e.key === 'Enter' && saveFolderName(folder.id)}
-
-
-                      sx={{ fontSize: '0.9rem' }}
-
-
-                      autoFocus
-
-
-                    />
-
-
-                  ) : (
-
-
-                    <Typography
-
-
-                      variant="body2"
-
-
-                      sx={{
-
-
-                        flexGrow: 1,
-
-
-                        fontSize: '0.9rem',
-
-
-                        color: 'text.primary'
-
-
-                      }}
-
-
-                    >
-
-
-                      {folder.name}
-
-
-                    </Typography>
-
-
-                  )}
-
-
-
-
-
-                  {folder.id !== 'default' && (
-
-
-                    <>
-
-
-                      {/* Edit Folder Icon */}
-
-
-                      <IconButton
-
-
-                        size="small"
-
-
-                        onClick={(e) => {
-
-
-                          e.stopPropagation();
-
-
-                          setEditingFolderId(folder.id);
-
-
-                          setNewFolderName(folder.name);
-
-
-                        }}
-
-
-                        sx={{
-
-
-                          ml: 0.5,
-
-
-                          opacity: 0,
-
-
-                          transition: 'opacity 0.2s',
-
-
-                          '&:hover': { opacity: 1 }
-
-
-                        }}
-
-
-                      >
-
-
-                        <EditIcon sx={{ fontSize: 14 }} />
-
-
-                      </IconButton>
-
-
-                      {/* Delete Folder Icon */}
-
-
-                      <IconButton
-
-
-                        size="small"
-
-
-                        onClick={(e) => {
-
-
-                          e.stopPropagation();
-
-
-                          deleteFolder(folder.id);
-
-
-                        }}
-
-
-                        sx={{
-
-
-                          ml: 0.5,
-
-
-                          opacity: 0,
-
-
-                          transition: 'opacity 0.2s',
-
-
-                          '&:hover': { opacity: 1 }
-
-
-                        }}
-
-
-                      >
-
-
-                        <DeleteIcon sx={{ fontSize: 14 }} />
-
-
-                      </IconButton>
-
-
-                    </>
-
-
-                  )}
-
-
-                </ListItemButton>
-
-
-              </ListItem>
-
-
-
-
-
-              {folder.expanded && (
-
-
-                <List sx={{ pl: 3 }}>
-
-
-                  {sessions
-
-
-                    .filter(session => (session.folderId || 'default') === folder.id)
-
-
-                    .map((session) => (
-
-
-                      <ListItem
-
-
-                        key={session.id}
-
-
-                        disablePadding
-
-
-                        sx={{ mb: 0.5 }}
-
-
-                      >
-
-
-                        <ListItemButton
-
-
-                          selected={currentSessionId === session.id}
-
-
-                          onClick={() => selectSession(session.id)}
-
-
-                          sx={{
-
-
-                            borderRadius: '8px',
-
-
-                            py: 0.5,
-
-
-                            minHeight: 32,
-
-
-                            pl: 1,
-
-
-                            '&.Mui-selected': {
-
-
-                              bgcolor: darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-
-
-                              '&:hover': {
-
-
-                                bgcolor: darkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)'
-
-
-                              }
-
-
-                            },
-
-
-                            '&:hover': {
-
-
-                              bgcolor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'
-
-
-                            }
-
-
-                          }}
-
-
-                        >
-
-
-                          {editingTitleId === session.id ? (
-
-
-                            <TextField
-
-
-                              size="small"
-
-
-                              value={newTitle}
-
-
-                              onChange={(e) => setNewTitle(e.target.value)}
-
-
-                              onBlur={() => saveTitle(session.id)}
-
-
-                              onKeyPress={(e) => e.key === 'Enter' && saveTitle(session.id)}
-
-
-                              sx={{ fontSize: '0.85rem' }}
-
-
-                              autoFocus
-
-
-                              fullWidth
-
-
-                            />
-
-
-                          ) : (
-
-
-                            <ListItemText
-
-
-                              primary={
-
-
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-
-
-                                  <Typography
-
-
-                                    variant="body2"
-
-
-                                    noWrap
-
-
-                                    sx={{
-
-
-                                      fontSize: '0.85rem',
-
-
-                                      color: 'text.primary'
-
-
-                                    }}
-
-
-                                  >
-
-
-                                    {session.title}
-
-
-                                  </Typography>
-
-
-                                  {session.isTemporary && (
-
-
-                                    <Chip
-
-
-                                      label="Temp"
-
-
-                                      size="small"
-
-
-                                      sx={{
-
-
-                                        height: 16,
-
-
-                                        fontSize: '0.65rem',
-
-
-                                        bgcolor: darkMode ? 'rgba(245, 124, 0, 0.2)' : 'rgba(245, 124, 0, 0.1)',
-
-
-                                        color: '#f57c00'
-
-
-                                      }}
-
-
-                                    />
-
-
-                                  )}
-
-
-                                </Box>
-
-
-                              }
-
-
-                            />
-
-
-                          )}
-
-
-                          {/* Edit Icon */}
-
-
-                          <IconButton
-
-
-                            size="small"
-
-
-                            onClick={(e) => {
-
-
-                              e.stopPropagation();
-
-
-                              setEditingTitleId(session.id);
-
-
-                              setNewTitle(session.title);
-
-
-                            }}
-
-
-                            sx={{
-
-
-                              ml: 0.5,
-
-
-                              opacity: currentSessionId === session.id ? 1 : 0,
-
-
-                              transition: 'opacity 0.2s',
-
-
-                              '&:hover': { opacity: 1 }
-
-
-                            }}
-
-
-                          >
-
-
-                            <EditIcon sx={{ fontSize: 14 }} />
-
-
-                          </IconButton>
-
-
-                          {/* Delete Icon */}
-
-
-                          <IconButton
-
-
-                            size="small"
-
-
-                            onClick={(e) => {
-
-
-                              e.stopPropagation();
-
-
-                              deleteSession(session.id);
-
-
-                            }}
-
-
-                            sx={{
-
-
-                              ml: 0.5,
-
-
-                              opacity: currentSessionId === session.id ? 1 : 0,
-
-
-                              transition: 'opacity 0.2s',
-
-
-                              '&:hover': { opacity: 1 }
-
-
-                            }}
-
-
-                          >
-
-
-                            <DeleteIcon sx={{ fontSize: 14 }} />
-
-
-                          </IconButton>
-
-
-                        </ListItemButton>
-
-
-                      </ListItem>
-
-
-                    ))}
-
-
-                </List>
-
-
-              )}
-
-
-            </Box>
-
-
-          ))}
-
-
-        </List>
-
-
-
-
-
-        <Divider sx={{ mx: 1 }} />
-
-
-
-
-
-        <Box sx={{ p: 1.5 }}>
-
-
-          {isAdmin && (
-
-
-            <Button
-
-
-              fullWidth
-
-
-              variant="text"
-
-
-              startIcon={<DashboardIcon />}
-
-
-              onClick={() => navigate('/dashboard')}
-
-
-              sx={{
-
-
-                mb: 0.5,
-
-
-                textTransform: 'none',
-
-
-                justifyContent: 'flex-start',
-
-
-                color: 'text.secondary',
-
-
-                fontSize: '0.85rem',
-
-
-                py: 0.5,
-
-
-                borderRadius: '8px',
-
-
-                '&:hover': {
-
-
-                  bgcolor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'
-
-
-                }
-
-
-              }}
-
-
-            >
-
-
-              Admin Dashboard
-
-
-            </Button>
-
-
-          )}
-
-
-
-
-
-          <Button
-
-
-            fullWidth
-
-
-            variant="text"
-
-
-            startIcon={<LogoutIcon />}
-
-
-            onClick={handleLogout}
-
-
-            sx={{
-
-
-              textTransform: 'none',
-
-
-              justifyContent: 'flex-start',
-
-
-              color: 'text.secondary',
-
-
-              fontSize: '0.85rem',
-
-
-              py: 0.5,
-
-
-              borderRadius: '8px',
-
-
-              '&:hover': {
-
-
-                bgcolor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'
-
-
-              }
-
-
-            }}
-
-
-          >
-
-
-            Abmelden
-
-
-          </Button>
-
-
-
-
-
-        </Box>
-
-
-      </Drawer>
-
-
-
-
-
-      {/* Main Chat Area */}
-
+        drawerWidth={drawerWidth}
+        darkMode={darkMode}
+        folders={folders}
+        sessions={sessions}
+        currentSessionId={currentSessionId}
+        isAdmin={isAdmin}
+        createNewSession={createNewSession}
+        createNewFolder={createNewFolder}
+        toggleFolder={toggleFolder}
+        editingFolderId={editingFolderId}
+        setEditingFolderId={setEditingFolderId}
+        newFolderName={newFolderName}
+        setNewFolderName={setNewFolderName}
+        saveFolderName={saveFolderName}
+        deleteFolder={deleteFolder}
+        selectSession={selectSession}
+        editingTitleId={editingTitleId}
+        setEditingTitleId={setEditingTitleId}
+        newTitle={newTitle}
+        setNewTitle={setNewTitle}
+        saveTitle={saveTitle}
+        deleteSession={deleteSession}
+        moveSessionToFolder={moveSessionToFolder}
+        onNavigateDashboard={() => navigate('/dashboard')}
+        onLogout={handleLogout}
+      />
 
       <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-
-
-        {/* Header */}
-
-
-        <Box sx={{
-
-
-          borderBottom: darkMode ? '1px solid #2d2d2d' : '1px solid #e5e5e5',
-
-
-          bgcolor: darkMode ? '#1e1e1e' : '#ffffff',
-
-
-          px: 3,
-
-
-          py: 2,
-
-
-          display: 'flex',
-
-
-          alignItems: 'center',
-
-
-          gap: 2
-
-
-        }}>
-
-
-          <IconButton
-
-
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-
-
-            size="small"
-
-
-            sx={{ color: 'text.secondary' }}
-
-
-          >
-
-
-            <MenuIcon fontSize="small" />
-
-
-          </IconButton>
-
-
-
-
-
-          <Typography variant="h6" sx={{ flexGrow: 1, fontSize: '1rem', fontWeight: 400, color: 'text.primary' }}>
-
-
-            {sessions.find(s => s.id === currentSessionId)?.title || 'Chat'}
-
-
-          </Typography>
-
-
-
-
-
-          {/* Dark Mode Toggle */}
-
-
-          <IconButton
-
-
-            onClick={toggleDarkMode}
-
-
-            size="small"
-
-
-            sx={{ color: 'text.secondary' }}
-
-
-          >
-
-
-            {darkMode ? <LightModeIcon fontSize="small" /> : <DarkModeIcon fontSize="small" />}
-
-
-          </IconButton>
-
-
-
-
-
-
-
-
-          <Avatar
-
-
-            sx={{
-
-
-              bgcolor: 'text.secondary',
-
-
-              cursor: 'pointer',
-
-
-              width: 32,
-
-
-              height: 32,
-
-
-              fontSize: '0.85rem',
-
-
-              borderRadius: '50%'
-
-
-            }}
-
-
-            onClick={(e) => setAnchorEl(e.currentTarget)}
-
-
-          >
-
-
-            {user?.username?.[0]?.toUpperCase() || 'U'}
-
-
-          </Avatar>
-
-
-
-
-
-          <Menu
-
-
-            anchorEl={anchorEl}
-
-
-            open={Boolean(anchorEl)}
-
-
-            onClose={() => setAnchorEl(null)}
-
-
-            PaperProps={{
-
-
-              sx: {
-
-
-                mt: 1,
-
-
-                minWidth: 180,
-
-
-                bgcolor: darkMode ? '#2a2a2a' : '#ffffff',
-
-
-                border: darkMode ? '1px solid #3d3d3d' : '1px solid #e5e5e5'
-
-
-              }
-
-
-            }}
-
-
-          >
-
-
-            <MenuItem disabled sx={{ fontSize: '0.85rem' }}>
-
-
-              {user?.email}
-
-
-            </MenuItem>
-
-
-            <Divider />
-
-
-            <MenuItem onClick={handleLogout} sx={{ fontSize: '0.85rem' }}>
-
-
-              <LogoutIcon sx={{ mr: 1, fontSize: 16 }} /> Abmelden
-
-
-            </MenuItem>
-
-
-          </Menu>
-
-
-        </Box>
-
-
-
-
-
-        {/* Messages Area */}
-
-
-        <Box sx={{
-
-
-          flexGrow: 1,
-
-
-          overflow: 'auto',
-
-
-          p: 3,
-
-
-          display: 'flex',
-
-
-          flexDirection: 'column',
-
-
-          alignItems: 'center'
-
-
-        }}>
-
-
-          <Box sx={{ width: '100%', maxWidth: 800 }}>
-
-
-            {messages.length === 0 ? (
-
-
-              <Box sx={{
-
-
-                textAlign: 'center',
-
-
-                py: 10
-
-
-              }}>
-
-
-                <Typography variant="h4" gutterBottom sx={{ fontWeight: 300 }}>
-
-
-                  Wie kann ich Ihnen helfen?
-
-
-                </Typography>
-
-
-                <Typography variant="body1" color="text.secondary">
-
-
-                  Stellen Sie Fragen, laden Sie Dokumente hoch oder erkunden Sie die Plattform
-
-
-                </Typography>
-
-
-              </Box>
-
-
-            ) : (
-
-
-              <>
-
-
-                {messages.map((message) => (
-
-
-                  <Box
-
-
-                    key={message.id}
-
-
-                    sx={{
-
-
-                      mb: 3,
-
-
-                      display: 'flex',
-
-
-                      justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start'
-
-
-                    }}
-
-
-                  >
-
-
-                    {message.role !== 'user' && (
-
-
-                      <Avatar sx={{
-
-
-                        bgcolor: '#10a37f',
-
-
-                        mr: 2,
-
-
-                        width: 32,
-
-
-                        height: 32,
-
-
-                        borderRadius: '50%'
-
-
-                      }}>
-
-
-                        AI
-
-
-                      </Avatar>
-
-
-                    )}
-
-
-
-
-
-                    <Paper
-
-
-                      sx={{
-
-
-                        p: 2,
-
-
-                        maxWidth: '70%',
-
-
-                        bgcolor: message.role === 'user'
-
-
-                          ? (darkMode ? '#4a5568' : '#e3f2fd')
-
-
-                          : (darkMode ? '#2d3748' : 'white'),
-
-
-                        borderRadius: '16px'
-
-
-                      }}
-
-
-                    >
-
-
-                      <Typography sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-
-
-                        {message.content}
-
-
-                      </Typography>
-
-
-
-
-
-                      {message.attachments && message.attachments.length > 0 && (
-
-
-                        <Box sx={{ mt: 1 }}>
-
-
-                          {message.attachments.map((file, idx) => (
-
-
-                            <Chip
-
-
-                              key={idx}
-
-
-                              label={file.name}
-
-
-                              size="small"
-
-
-                              icon={<AttachFileIcon />}
-
-
-                              sx={{ mr: 1, mb: 1 }}
-
-
-                            />
-
-
-                          ))}
-
-
-                        </Box>
-
-
-                      )}
-
-
-
-
-
-                      {message.citations && message.citations.length > 0 && (
-                        <Box sx={{ mt: 1.5 }}>
-                          <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 0.5 }}>
-                            Referenzierte Dokumente:
-                          </Typography>
-                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                            {message.citations.map((doc) => (
-                              <Chip
-                                key={`${doc.source}-${doc.documentId ?? doc.id}-${doc.chunkId ?? 'root'}`}
-                                icon={<InsertDriveFileIcon />}
-
-                                label={doc.title}
-                                size="small"
-                                onClick={() => openDocumentPreview(doc)}
-                                sx={{ maxWidth: '100%' }}
-                              />
-                            ))}
-                          </Box>
-                        </Box>
-                      )
-                      {message.role === 'assistant' && (
-
-
-                        <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
-
-
-                          <IconButton size="small" onClick={() => handleCopy(message.content)}>
-
-
-                            <CopyIcon fontSize="small" />
-
-
-                          </IconButton>
-
-
-                        </Box>
-
-
-                      )}
-
-
-                    </Paper>
-
-
-
-
-
-                    {message.role === 'user' && (
-
-
-                      <Avatar sx={{
-
-
-                        bgcolor: 'primary.main',
-
-
-                        ml: 2,
-
-
-                        width: 32,
-
-
-                        height: 32,
-
-
-                        borderRadius: '50%'
-
-
-                      }}>
-
-
-                        {user?.username?.[0]?.toUpperCase() || 'U'}
-
-
-                      </Avatar>
-
-
-                    )}
-
-
-                  </Box>
-
-
-                ))}
-
-
-
-
-
-                {loading && (
-
-
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-
-
-                    <Avatar sx={{ bgcolor: '#10a37f', width: 32, height: 32 }}>
-
-
-                      AI
-
-
-                    </Avatar>
-
-
-                    <CircularProgress size={20} />
-
-
-                  </Box>
-
-
-                )}
-
-
-              </>
-
-
-            )}
-
-
-            <div ref={messagesEndRef} />
-
-
-          </Box>
-
-
-        </Box>
-
-
-
-
-
-        {/* Input Area */}
-
-
-        <Box sx={{
-
-
-          p: 2,
-
-
-          borderTop: darkMode ? '1px solid #333' : '1px solid #e0e0e0',
-
-
-          bgcolor: darkMode ? '#1e1e1e' : 'white'
-
-
-        }}>
-
-
-          <Box sx={{ maxWidth: 1200, mx: 'auto' }}>
-
-
-            {uploadedFiles.length > 0 && (
-
-
-              <Box sx={{ mb: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-
-
-                {uploadedFiles.map((file, idx) => (
-
-
-                  <Chip
-
-
-                    key={idx}
-
-
-                    label={file.name}
-
-
-                    onDelete={() => setUploadedFiles(files => files.filter((_, i) => i !== idx))}
-
-
-                    icon={<AttachFileIcon />}
-
-
-                    color="primary"
-
-
-                  />
-
-
-                ))}
-
-
-              </Box>
-
-
-            )}
-
-
-
-
-
-            {/* Toggles Row - Separate line above input */}
-
-
-            <Box sx={{
-
-
-              mb: 2,
-
-
-              display: 'flex',
-
-
-              gap: 2,
-
-
-              justifyContent: 'flex-start',
-
-
-              flexWrap: 'wrap'
-
-
-            }}>
-
-
-              {/* Search Toggle */}
-
-
-              <Chip
-
-
-                icon={<SearchIcon />}
-
-
-                label="Suche"
-
-
-                onClick={() => setSearchEnabled(!searchEnabled)}
-
-
-                variant={searchEnabled ? "filled" : "outlined"}
-
-
-                size="medium"
-
-
-                sx={{
-
-
-                  minWidth: '160px',
-
-
-                  height: 38,
-
-
-                  '& .MuiChip-icon': {
-
-
-                    fontSize: '1.2rem',
-
-
-                    color: searchEnabled ? 'white' : (darkMode ? 'white' : 'inherit')
-
-
-                  },
-
-
-                  '& .MuiChip-label': { px: 1.5, fontSize: '0.95rem', fontWeight: 500 },
-
-
-                  bgcolor: searchEnabled ? '#003d7a' : 'transparent',
-
-
-                  color: searchEnabled ? 'white' : (darkMode ? 'white' : 'text.primary'),
-
-
-                  borderColor: searchEnabled ? '#003d7a' : (darkMode ? 'rgba(255,255,255,0.3)' : 'divider'),
-
-
-                  borderWidth: 2,
-
-
-                  '&:hover': {
-
-
-                    bgcolor: searchEnabled ? '#002855' : 'action.hover',
-
-
-                    borderColor: '#003d7a'
-
-
-                  },
-
-
-                  transition: 'all 0.2s ease'
-
-
-                }}
-
-
-              />
-
-
-
-
-
-              {/* Save to Database Toggle (only visible when files attached) */}
-
-
-              {uploadedFiles.length > 0 && (
-
-
-                <>
-
-
-                  <Chip
-
-
-                    icon={saveToDatabase ? <CompanyIcon /> : <ChatOnlyIcon />}
-
-
-                    label={saveToDatabase ? "Firmendatenbank" : "Chat-Kontext"}
-
-
-                    onClick={() => setSaveToDatabase(!saveToDatabase)}
-
-
-                    variant={saveToDatabase ? "filled" : "outlined"}
-
-
-                    size="medium"
-
-
-                    sx={{
-
-
-                      minWidth: '160px',
-
-
-                      height: 38,
-
-
-                      '& .MuiChip-icon': {
-
-
-                        fontSize: '1.2rem',
-
-
-                        color: saveToDatabase ? 'white' : (darkMode ? 'white' : 'inherit')
-
-
-                      },
-
-
-                      '& .MuiChip-label': { px: 1.5, fontSize: '0.95rem', fontWeight: 500 },
-
-
-                      bgcolor: saveToDatabase ? '#003d7a' : 'transparent',
-
-
-                      color: saveToDatabase ? 'white' : (darkMode ? 'white' : 'text.primary'),
-
-
-                      borderColor: saveToDatabase ? '#003d7a' : (darkMode ? 'rgba(255,255,255,0.3)' : 'divider'),
-
-
-                      borderWidth: 2,
-
-
-                      '&:hover': {
-
-
-                        bgcolor: saveToDatabase ? '#002855' : 'action.hover',
-
-
-                        borderColor: '#003d7a'
-
-
-                      },
-
-
-                      transition: 'all 0.2s ease'
-
-
-                    }}
-
-
-                  />
-
-
-
-
-
-                  {/* Visibility Toggle (only visible when saving to database) */}
-
-
-                  {saveToDatabase && (
-
-
-                    <Chip
-
-
-                      icon={documentVisibility === 'all' ? <PublicIcon /> : <GroupIcon />}
-
-
-                      label={documentVisibility === 'all' ? 'Alle' : 'Nur Abteilung'}
-
-
-                      onClick={() => setDocumentVisibility(documentVisibility === 'all' ? 'department' : 'all')}
-
-
-                      variant={documentVisibility === 'all' ? "filled" : "outlined"}
-
-
-                      size="medium"
-
-
-                      sx={{
-
-
-                        minWidth: '160px',
-
-
-                        height: 38,
-
-
-                        '& .MuiChip-icon': {
-
-
-                          fontSize: '1.2rem',
-
-
-                          color: documentVisibility === 'all' ? 'white' : (darkMode ? 'white' : 'inherit')
-
-
-                        },
-
-
-                        '& .MuiChip-label': { px: 1.5, fontSize: '0.95rem', fontWeight: 500 },
-
-
-                        bgcolor: documentVisibility === 'all' ? '#003d7a' : 'transparent',
-
-
-                        color: documentVisibility === 'all' ? 'white' : (darkMode ? 'white' : 'text.primary'),
-
-
-                        borderColor: documentVisibility === 'all' ? '#003d7a' : (darkMode ? 'rgba(255,255,255,0.3)' : 'divider'),
-
-
-                        borderWidth: 2,
-
-
-                        '&:hover': {
-
-
-                          bgcolor: documentVisibility === 'all' ? '#002855' : 'action.hover',
-
-
-                          borderColor: '#003d7a'
-
-
-                        },
-
-
-                        transition: 'all 0.2s ease'
-
-
-                      }}
-
-
-                    />
-
-
-                  )}
-
-
-
-
-
-                </>
-
-
-              )}
-
-
-
-
-
+        <ChatHeader
+          title={currentSession?.title ?? 'Chat'}
+          darkMode={darkMode}
+          onToggleDarkMode={toggleDarkMode}
+          onToggleSidebar={handleSidebarToggle}
+          user={user}
+          onLogout={handleLogout}
+          onPublish={handleOpenPublishDialog}
+          canPublish={messages.length > 0}
+        />
+
+        {lastContextDocuments.length > 0 && (
+          <Box sx={{ px: 3, pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Typography variant="caption" color="text.secondary">
+              Verwendete Dokumente
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {lastContextDocuments.map(doc => (
+                <Chip
+                  key={`${doc.documentId ?? doc.id}-context`}
+                  icon={<InsertDriveFileIcon fontSize="small" />}
+                  label={doc.alias ? `${doc.alias} - ${doc.title}` : doc.title}
+                  size="small"
+                  onClick={() => openDocumentPreview(doc)}
+                  sx={{ maxWidth: '100%' }}
+                />
+              ))}
             </Box>
-
-
-
-
-
-            {/* Input Field Row */}
-
-
-            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', width: '100%' }}>
-
-
-              <input
-
-
-                type="file"
-
-
-                multiple
-
-
-                ref={fileInputRef}
-
-
-                onChange={handleFileSelect}
-
-
-                style={{ display: 'none' }}
-
-
-                accept=".txt,.pdf,.docx,.xlsx,.pptx,.md,.json,.csv,.xml,.html"
-
-
-              />
-
-
-
-
-
-
-
-
-              {/* Attachment button */}
-
-
-              <Tooltip title="Dateien anhaengen">
-
-
-                <IconButton
-
-
-                  onClick={() => fileInputRef.current?.click()}
-
-
-                  sx={{
-
-
-                    color: darkMode ? 'grey.400' : 'grey.600',
-
-
-                    '&:hover': { color: '#003d7a' },
-
-
-                    alignSelf: 'center',
-
-
-                    mb: 0.5
-
-
-                  }}
-
-
-                >
-
-
-                  <AttachFileIcon />
-
-
-                </IconButton>
-
-
-              </Tooltip>
-
-
-
-
-
-              {/* Input field - takes remaining space */}
-
-
-              <TextField
-
-
-                fullWidth
-
-
-                multiline
-
-
-                maxRows={4}
-
-
-                value={inputMessage}
-
-
-                onChange={(e) => setInputMessage(e.target.value)}
-
-
-                onKeyDown={handleKeyPress}
-
-
-                placeholder={uploadedFiles.length > 0 ? "Beschreibe deine Dateien oder stelle eine Frage..." : "Nachricht eingeben..."}
-
-
-                disabled={loading}
-
-
-                sx={{
-
-
-                  flexGrow: 1,
-
-
-                  '& .MuiOutlinedInput-root': {
-
-
-                    borderRadius: '24px',
-
-
-                    bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5',
-
-
-                    pr: 0.5,
-
-
-                    '&:hover fieldset': {
-
-
-                      borderColor: '#003d7a'
-
-
-                    },
-
-
-                    '&.Mui-focused fieldset': {
-
-
-                      borderColor: '#003d7a',
-
-
-                      borderWidth: 2
-
-
-                    }
-
-
-                  }
-
-
-                }}
-
-
-                InputProps={{
-
-
-                  endAdornment: (
-
-
-                    <IconButton
-
-
-                      onClick={sendMessage}
-
-
-                      disabled={loading || (!inputMessage.trim() && uploadedFiles.length === 0)}
-
-
-                      sx={{
-
-
-                        bgcolor: loading ? 'transparent' : '#003d7a',
-
-
-                        color: loading ? 'grey.500' : 'white',
-
-
-                        borderRadius: '50%',
-
-
-                        mr: 0.5,
-
-
-                        '&:hover': { bgcolor: loading ? 'transparent' : '#002855' },
-
-
-                        '&:disabled': {
-
-
-                          bgcolor: 'action.disabledBackground',
-
-
-                          color: 'action.disabled'
-
-
-                        }
-
-
-                      }}
-
-
-                    >
-
-
-                      {loading ? <CircularProgress size={24} /> : <SendIcon />}
-
-
-                    </IconButton>
-
-
-                  )
-
-
-                }}
-
-
-              />
-
-
-            </Box>
-
-
-
-
-
-            {uploading && (
-
-
-              <Box sx={{ mt: 1 }}>
-
-
-                <LinearProgress />
-
-
-                <Typography variant="caption">Dateien werden hochgeladen...</Typography>
-
-
-              </Box>
-
-
-            )}
-
-
-
-
-
-            {/* Upload Success/Error Messages */}
-
-
-            {uploadSuccess.length > 0 && (
-
-
-              <Box sx={{ mt: 1 }}>
-
-
-                {uploadSuccess.map((message, idx) => (
-
-
-                  <Typography
-
-
-                    key={idx}
-
-
-                    variant="caption"
-
-
-                    sx={{
-
-
-                      display: 'block',
-
-
-                      color: message.includes('fehlgeschlagen') ? 'error.main' : 'success.main',
-
-
-                      fontSize: '0.75rem'
-
-
-                    }}
-
-
-                  >
-
-
-                    {message}
-
-
-                  </Typography>
-
-
-                ))}
-
-
-              </Box>
-
-
-            )}
-
-
-
-
-
-            {/* Show documents available in session */}
-
-
-            {currentSessionDocuments.length > 0 && (
-
-
-              <Box sx={{ mt: 1 }}>
-
-
-                <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem', mb: 0.5 }}>
-
-
-                  Verfuegbare Dateien in dieser Session:
-
-
-                </Typography>
-
-
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-
-
-                  {currentSessionDocuments.map(doc => (
-
-
-                    <Chip
-
-
-                      key={doc.id}
-
-
-                      icon={<InsertDriveFileIcon />}
-
-
-                      label={doc.title}
-
-
-                      onClick={() => openDocumentPreview(doc)}
-
-
-                      sx={{ maxWidth: '100%' }}
-
-
-                    />
-
-
-                  ))}
-
-
-                </Box>
-
-
-              </Box>
-
-
-            )}
-
-
           </Box>
+        )}
 
+        <MessageList
+          messages={messages}
+          darkMode={darkMode}
+          loading={loading}
+          user={user}
+          onCopy={handleCopy}
+          onOpenDocument={openDocumentPreview}
+          messagesEndRef={messagesEndRef}
+          containerRef={messagesContainerRef}
+          onScroll={handleMessagesScroll}
+        />
 
-        </Box>
-
-
+        <ChatInput
+          darkMode={darkMode}
+          uploadedFiles={uploadedFiles}
+          onRemoveUploadedFile={handleRemoveUploadedFile}
+          searchEnabled={searchEnabled}
+          onToggleSearch={handleToggleSearch}
+          saveToDatabase={saveToDatabase}
+          onToggleSaveToDatabase={handleToggleSaveToDatabase}
+          documentVisibility={documentVisibility}
+          onToggleDocumentVisibility={handleToggleDocumentVisibility}
+          fileInputRef={fileInputRef}
+          onFileSelect={handleFileSelect}
+          inputMessage={inputMessage}
+          onInputChange={handleInputChange}
+          onKeyDown={handleKeyPress}
+          loading={loading}
+          onSend={sendMessage}
+          uploading={uploading}
+          uploadSuccess={uploadSuccess}
+          currentSessionDocuments={currentSessionDocuments}
+          onOpenDocument={openDocumentPreview}
+        />
       </Box>
 
-
-
-
-
       <Dialog open={previewOpen} onClose={closeDocumentPreview} fullWidth maxWidth="md">
-
-
         <DialogTitle>{documentPreview?.title || 'Dokumentvorschau'}</DialogTitle>
-
-
         <DialogContent dividers>
-
-
           {previewLoading ? (
-
-
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 160 }}><CircularProgress size={32} /></Box>
-
-
-          ) : previewError ? (
-
-
-            <Alert severity="error">{previewError}</Alert>
-
-
-          ) : (
-
-
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-
-
-              <Typography variant="body2" color="text.secondary">
-
-
-                {documentPreview?.mimeType || 'Unbekannter Dateityp'}
-
-
-              </Typography>
-
-
-              <Paper
-
-
-                variant="outlined"
-
-
-                sx={{
-
-
-                  p: 2,
-
-
-                  maxHeight: 360,
-
-
-                  overflow: 'auto',
-
-
-                  whiteSpace: 'pre-wrap',
-
-
-                  wordBreak: 'break-word',
-
-
-                  fontFamily: 'Consolas, "Courier New", monospace',
-
-
-                  fontSize: '0.9rem'
-
-
-                }}
-
-
-              >
-
-
-                {documentPreview?.content || documentPreview?.contentPreview || 'Kein Inhalt verfuegbar.'}
-
-
-              </Paper>
-
-
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 160 }}>
+              <CircularProgress size={32} />
             </Box>
-
-
+          ) : previewError ? (
+            <Alert severity="error">{previewError}</Alert>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Typography variant="body2" color="text.secondary">
+                {documentPreview?.mimeType || 'Unbekannter Dateityp'}
+              </Typography>
+              <Paper
+                variant="outlined"
+                sx={{
+                  p: 2,
+                  maxHeight: 360,
+                  overflow: 'auto',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontFamily: 'Consolas, \"Courier New\", monospace',
+                  fontSize: '0.9rem'
+                }}
+              >
+                {documentPreview?.content || documentPreview?.contentPreview || 'Kein Inhalt verfuegbar.'}
+              </Paper>
+            </Box>
           )}
-
-
         </DialogContent>
-
-
         <DialogActions>
-
-
           <Button onClick={closeDocumentPreview}>Schliessen</Button>
-
-
         </DialogActions>
-
-
       </Dialog>
 
+      {/* Publish Session Dialog */}
+      <Dialog
+        open={publishDialogOpen}
+        onClose={handleClosePublishDialog}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{
+          sx: {
+            bgcolor: darkMode ? '#2a2a2a' : '#ffffff',
+            border: darkMode ? '1px solid #3d3d3d' : '1px solid #e5e5e5',
+          }
+        }}
+      >
+        <DialogTitle sx={{ color: 'text.primary' }}>
+          Sitzung als Dokument verÃƒÂ¶ffentlichen
+        </DialogTitle>
+        <DialogContent>
+          {publishSuccess ? (
+            <Alert severity="success" sx={{ mt: 2 }}>
+              Sitzung erfolgreich verÃƒÂ¶ffentlicht! Das Dokument ist jetzt in der Wissensdatenbank verfÃƒÂ¼gbar.
+            </Alert>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+              <Typography variant="body2" color="text.secondary">
+                VerÃƒÂ¶ffentlichen Sie diese Chat-Sitzung als durchsuchbares Dokument in der Wissensdatenbank.
+              </Typography>
 
+              <TextField
+                label="Titel"
+                value={publishTitle}
+                onChange={(e) => setPublishTitle(e.target.value)}
+                fullWidth
+                required
+                autoFocus
+                error={!!publishError && !publishTitle.trim()}
+                helperText={!publishTitle.trim() && publishError ? 'Titel ist erforderlich' : ''}
+              />
+
+              <TextField
+                label="Beschreibung (optional)"
+                value={publishDescription}
+                onChange={(e) => setPublishDescription(e.target.value)}
+                fullWidth
+                multiline
+                rows={3}
+                placeholder="FÃƒÂ¼gen Sie eine Beschreibung hinzu, um anderen zu helfen, dieses Dokument zu finden..."
+              />
+
+              {publishError && (
+                <Alert severity="error">{publishError}</Alert>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleClosePublishDialog} disabled={publishing}>
+            {publishSuccess ? 'SchlieÃƒÅ¸en' : 'Abbrechen'}
+          </Button>
+          {!publishSuccess && (
+            <Button
+              onClick={handlePublishSession}
+              variant="contained"
+              disabled={publishing || !publishTitle.trim()}
+              startIcon={publishing ? <CircularProgress size={16} /> : null}
+            >
+              {publishing ? 'VerÃƒÂ¶ffentliche...' : 'VerÃƒÂ¶ffentlichen'}
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
     </Box>
-
-
   );
 
 
@@ -4253,3 +1841,11 @@ const ChatGPT: React.FC = () => {
 
 
 export default ChatGPT;
+
+
+
+
+
+
+
+

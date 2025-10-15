@@ -101,7 +101,8 @@ pyramid-redis      - Running on port 6379
 
 ## Configuration (Environment Variables)
 - `DATABASE_URL`: postgresql://pyramid_user:pyramid_pass@pyramid-postgres:5432/pyramid_rag
-- `SECRET_KEY`: JWT signing key
+- `SECRET_KEY`: JWT signing key (set via env for predictable deployments; otherwise a random value is stored via `SECRET_KEY_FILE`)
+- `SECRET_KEY_FILE`: Optional path where the backend persists the generated JWT secret when `SECRET_KEY` is unset
 - `OLLAMA_BASE_URL`: http://ollama:11434
 - `OLLAMA_MODEL`: qwen2.5:7b
 - `EMBEDDING_MODEL`: paraphrase-multilingual-MiniLM-L12-v2

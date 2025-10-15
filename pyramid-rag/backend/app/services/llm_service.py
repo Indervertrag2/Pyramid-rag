@@ -5,7 +5,7 @@ from datetime import datetime
 import asyncio
 import os
 from app.services.search_service import SearchService
-from app.services.embedding_service import EmbeddingService
+from app.services.ollama_embedding_service import OllamaEmbeddingService
 
 
 class LLMService:
@@ -14,7 +14,7 @@ class LLMService:
         self.model = os.getenv('OLLAMA_MODEL', 'qwen2.5:7b')
         self.timeout = float(os.getenv('OLLAMA_TIMEOUT', '30.0'))
         self.search_service = SearchService()
-        self.embedding_service = EmbeddingService()
+        self.embedding_service = OllamaEmbeddingService()
 
     async def check_model_availability(self) -> bool:
         """Check if the specified model is available in Ollama."""

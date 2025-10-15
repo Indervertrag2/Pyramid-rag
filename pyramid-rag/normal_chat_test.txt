@@ -1,2 +1,0 @@
-Normaler Chat Test-Datei
-Soll in Firmendatenbank gespeichert werden.

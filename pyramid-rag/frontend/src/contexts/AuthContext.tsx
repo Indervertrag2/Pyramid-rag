@@ -1,14 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+﻿import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
-interface User {
-  id: string;
-  email: string;
-  username: string;
-  full_name?: string;
-  primary_department: string;
-  is_superuser: boolean;
-  roles?: string[];
-}
+import type { User } from '../types';
+import axios from 'axios';
+import apiClient from '../services/apiClient';
 
 interface AuthContextType {
   user: User | null;
@@ -37,65 +31,43 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Check for existing token on mount
     const token = localStorage.getItem('access_token');
-    if (token) {
-      // Validate token with backend
-      fetch('http://localhost:18000/api/v1/auth/me', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
-      .then(res => {
-        if (res.ok) {
-          return res.json();
-        }
-        throw new Error('Token invalid');
-      })
-      .then(data => {
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+
+    const fetchCurrentUser = async () => {
+      try {
+        const { data } = await apiClient.get('/api/v1/auth/me');
         setUser({
           id: data.id,
           email: data.email,
           username: data.username,
           full_name: data.full_name || data.username,
           primary_department: data.primary_department || 'Unknown',
-          is_superuser: data.is_superuser || false
+          is_superuser: data.is_superuser || false,
+          roles: data.roles || [],
         });
-      })
-      .catch(() => {
-        // Token invalid, clear it
+      } catch {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
-      })
-      .finally(() => {
+        setUser(null);
+      } finally {
         setIsLoading(false);
-      });
-    } else {
-      setIsLoading(false);
-    }
+      }
+    };
+
+    fetchCurrentUser();
   }, []);
 
   const login = async (email: string, password: string) => {
     try {
-      const response = await fetch('http://localhost:18000/api/v1/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Login failed');
-      }
-
-      const data = await response.json();
+      const { data } = await apiClient.post('/api/v1/auth/login', { email, password });
 
       localStorage.setItem('access_token', data.access_token);
       localStorage.setItem('refresh_token', data.refresh_token);
 
-      // Set user data from login response
       if (data.user) {
         setUser({
           id: data.user.id,
@@ -103,11 +75,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           username: data.user.username,
           full_name: data.user.full_name || data.user.username,
           primary_department: data.user.primary_department || 'Unknown',
-          is_superuser: data.user.is_superuser || false
+          is_superuser: data.user.is_superuser || false,
+          roles: data.user.roles || [],
         });
       }
     } catch (error) {
-      throw error;
+      if (axios.isAxiosError(error)) {
+        const detail = (error.response?.data as { detail?: string } | undefined)?.detail;
+        throw new Error(detail || 'Login failed');
+      }
+      throw error instanceof Error ? error : new Error('Login failed');
     }
   };
 

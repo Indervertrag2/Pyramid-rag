@@ -4,7 +4,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from jose import JWTError, jwt
-from app.database import get_db
+from app.database import get_async_db
 # from app.core.config import settings  # Not needed here
 from app.auth import decode_token
 from app.models import User
@@ -14,7 +14,7 @@ security = HTTPBearer()
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ) -> User:
     token = credentials.credentials
     credentials_exception = HTTPException(

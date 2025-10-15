@@ -1,7 +1,9 @@
-/**
+﻿/**
  * MCP Client Service for unified AI interactions
  * Handles all communication with the MCP server
  */
+
+import type { UploadedDocumentPayload } from '../types';
 
 export interface MCPMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
@@ -32,16 +34,6 @@ export interface Citation {
   relevance_score: number;
   snippet: string;
 }
-export interface UploadedDocumentPayload {
-  id: string;
-  title: string;
-  scope: 'GLOBAL' | 'CHAT';
-  content?: string;
-  content_length?: number;
-  mime_type?: string;
-  meta_data?: Record<string, any>;
-}
-
 
 export interface MCPToolsResponse {
   tools: Record<string, MCPToolDefinition>;
@@ -86,7 +78,7 @@ class MCPClient {
    * Stream a message response using Server-Sent Events
    */
   async streamMessage(
-    content: string,
+    messages: MCPMessage[],
     options: {
       tools?: string[];
       rag_enabled?: boolean;
@@ -101,17 +93,27 @@ class MCPClient {
   ): Promise<void> {
     // Since EventSource doesn't support POST with custom headers, we'll use fetch with ReadableStream
     try {
+      // Get fresh token from localStorage
+      const token = localStorage.getItem('access_token');
+
+      const payloadMessages = (messages && messages.length > 0)
+        ? messages.map(message => ({
+            role: message.role,
+            content: message.content,
+            tool_calls: message.tool_calls,
+            tool_call_id: message.tool_call_id,
+            name: message.name,
+          }))
+        : [{ role: 'user', content: '' }];
+
       const response = await fetch(`${this.baseUrl}/api/v1/mcp/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.token}`
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          messages: [{
-            role: 'user',
-            content
-          }],
+          messages: payloadMessages,
           tools: options.tools || ['chat'],
           session_id: options.session_id,
           context: {
@@ -207,7 +209,17 @@ class MCPClient {
                 options.onComplete();
               }
               if (options.onDone) {
-                options.onDone(payload);
+                let normalizedPayload: any = payload;
+                if (payload && typeof payload === 'object') {
+                  const citations = Array.isArray(payload.citations) ? payload.citations : [];
+                  const documents = Array.isArray(payload.documents) ? payload.documents : citations;
+                  normalizedPayload = {
+                    ...payload,
+                    documents,
+                    citations: citations.length > 0 ? citations : documents,
+                  };
+                }
+                options.onDone(normalizedPayload);
               }
               currentEvent = null;
               continue;
@@ -493,6 +505,7 @@ export const mcpClient = new MCPClient();
 // Export class for testing
 export default MCPClient;
 
-
+// Re-export shared types for convenience
+export type { UploadedDocumentPayload };
 
 

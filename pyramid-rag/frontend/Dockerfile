@@ -1,10 +1,10 @@
-# Build stage
+﻿# Build stage
 FROM node:20-alpine as builder
 
 WORKDIR /app
 
 # Build-time env for Vite bundling (default to backend service URL)
-ARG VITE_API_URL=http://localhost:18000
+ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
 
 # Copy package files
@@ -23,7 +23,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Runtime env for the static bundle (kept for consistency)
-ARG VITE_API_URL=http://localhost:18000
+ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
 
 # Install serve for production
@@ -41,3 +41,4 @@ EXPOSE 3000
 
 # Serve the application
 CMD ["serve", "-s", "build", "-l", "3000"]
+

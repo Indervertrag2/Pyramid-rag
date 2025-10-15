@@ -1,6 +1,0 @@
-Dies ist ein Test-Dokument für die Pyramid RAG Platform.
-
-Es enthält verschiedene Informationen:
-- RAG steht für Retrieval-Augmented Generation
-- Pyramid Computer ist unser Unternehmen
-- Document Processing funktioniert jetzt!

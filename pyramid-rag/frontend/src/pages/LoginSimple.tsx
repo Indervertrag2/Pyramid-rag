@@ -1,4 +1,7 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
+import axios from 'axios';
+
+import apiClient from '../services/apiClient';
 
 const LoginSimple: React.FC = () => {
   const [email, setEmail] = useState('admin@pyramid-computer.de');
@@ -14,35 +17,23 @@ const LoginSimple: React.FC = () => {
     try {
       console.log('Attempting login with:', { email, password });
 
-      const response = await fetch('http://localhost:18000/api/v1/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await response.json();
+      const { data } = await apiClient.post('/api/v1/auth/login', { email, password });
       console.log('Response:', data);
-
-      if (!response.ok) {
-        setError('Login failed: ' + (data.detail || 'Unknown error'));
-        return;
-      }
 
       localStorage.setItem('access_token', data.access_token);
       localStorage.setItem('refresh_token', data.refresh_token);
 
       setResult('Login successful! Token: ' + data.access_token.substring(0, 20) + '...');
 
-      // Redirect after 2 seconds
       setTimeout(() => {
         window.location.href = '/dashboard';
       }, 2000);
-
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Login error:', err);
-      setError('Network error: ' + (err.message || 'Unknown error'));
+      const message = axios.isAxiosError(err)
+        ? err.response?.data?.detail || err.message || 'Unknown error'
+        : (err as Error).message;
+      setError('Login failed: ' + message);
     }
   };
 

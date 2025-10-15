@@ -3,12 +3,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
-from app.database import get_db
+from app.database import get_async_db
 from app.models import SearchMode, DocumentScope
 from app.api.deps import get_current_user
 from app.services.search_service import SearchService
 
-router = APIRouter(prefix="/search", tags=["Search"])
+router = APIRouter(prefix="/api/v1/search", tags=["Search"])
 
 
 class SearchRequest(BaseModel):
@@ -43,7 +43,7 @@ class SearchResponse(BaseModel):
 @router.post("/", response_model=SearchResponse)
 async def search_documents(
     search_request: SearchRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user = Depends(get_current_user)
 ):
     """Search documents using the specified mode."""
@@ -96,7 +96,7 @@ async def search_documents(
 async def find_similar_documents(
     document_id: str,
     limit: int = Query(10, le=50),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user = Depends(get_current_user)
 ):
     """Find documents similar to the given document."""

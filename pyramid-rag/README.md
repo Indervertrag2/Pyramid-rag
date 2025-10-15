@@ -2,21 +2,21 @@
 
 Enterprise-Grade Retrieval-Augmented Generation Platform für Pyramid Computer GmbH
 
-## 🎯 Überblick
+## Überblick
 
 Die Pyramid RAG Platform ist eine vollständig on-premise betriebene KI-gestützte Dokumentenmanagement- und Wissensdatenbank-Lösung. Sie ermöglicht es Mitarbeitern, Unternehmensdokumente hochzuladen, zu durchsuchen und über einen KI-Assistenten zu befragen.
 
 ### Hauptfunktionen
 
-- 🤖 **KI-Chat-Assistent** mit Qwen 2.5 14B Modell
-- 📄 **Dokumentenverarbeitung** für alle gängigen Geschäftsdateiformate (PDF, Word, Excel, CAD, etc.)
-- 🔍 **Hybride Suche** (Semantisch + Stichwort)
-- 🔐 **Abteilungsbasierte Zugriffskontrolle**
-- 📊 **Monitoring & Metriken** mit Prometheus/Grafana
-- 🚀 **GPU-beschleunigt** für optimale Performance
-- 🏢 **100% On-Premise** ohne Cloud-Abhängigkeiten
+- KI-Chat-Assistent mit Qwen3 32B Modell
+- Dokumentenverarbeitung für alle gängigen Geschäftsdateiformate (PDF, Word, Excel, CAD, etc.) mit OCR-Unterstützung.
+- Hybride Suche (Semantisch + Stichwort) mit dem `paraphrase-multilingual-mpnet-base-v2` Embedding-Modell.
+- Abteilungsbasierte Zugriffskontrolle
+- Monitoring & Metriken mit Prometheus/Grafana
+- GPU-beschleunigt für optimale Performance
+- 100% On-Premise ohne Cloud-Abhängigkeiten
 
-## 📋 Systemanforderungen
+## Systemanforderungen
 
 ### Minimum
 - CPU: 8 Cores
@@ -34,15 +34,10 @@ Die Pyramid RAG Platform ist eine vollständig on-premise betriebene KI-gestütz
 - Python 3.11 (local CLI tooling outside Docker; see docs/local_python_setup.md)
 - Docker 24.0+
 - Docker Compose 2.20+
-- NVIDIA Container Toolkit (fr GPU-Support)
-- Windows (spter Windows Server) oder Linux (Ubuntu 20.04+ empfohlen)
+- NVIDIA Container Toolkit (für GPU-Support)
+- Windows (später Windows Server) oder Linux (Ubuntu 20.04+ empfohlen)
 
-- Docker 24.0+
-- Docker Compose 2.20+
-- NVIDIA Container Toolkit (fr GPU-Support)
-- Windows (spter Windows Server) oder Linux (Ubuntu 20.04+ empfohlen)
-
-## 🚀 Schnellstart
+## Schnellstart
 
 ### 1. Repository klonen
 ```bash
@@ -60,14 +55,14 @@ Das Setup-Skript:
 - Überprüft Systemvoraussetzungen
 - Erstellt Konfigurationsdateien
 - Lädt Docker-Images herunter
-- Installiert das Qwen 2.5 14B Modell
+- Installiert das Qwen3 32B Modell
 - Startet alle Dienste
 
 ### 3. Zugriff auf die Anwendung
-- **Hauptanwendung**: http://localhost
-- **Admin-Login**: admin@pyramid-computer.de / PyramidAdmin2024!
+- Hauptanwendung: http://localhost
+- Admin-Login: admin@pyramid-computer.de / PyramidAdmin2024!
 
-## 🏗️ Architektur
+## Architektur
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
@@ -88,7 +83,7 @@ Das Setup-Skript:
               └───────────┘          └─────────────────┘         └───────────────┘
 ```
 
-## 📁 Projektstruktur
+## Projektstruktur
 
 ```
 pyramid-rag/
@@ -118,7 +113,7 @@ pyramid-rag/
 └── README.md            # Diese Datei
 ```
 
-## 🔧 Konfiguration
+## Konfiguration
 
 ### Umgebungsvariablen
 
@@ -126,9 +121,12 @@ Wichtige Konfigurationen in `backend/.env`:
 
 ```env
 # LLM Konfiguration
-OLLAMA_MODEL=qwen2.5:14b
+OLLAMA_MODEL=qwen3:32b
 MAX_TOKENS=4096
 TEMPERATURE=0.7
+
+# Embedding Konfiguration
+EMBEDDING_MODEL=paraphrase-multilingual-mpnet-base-v2
 
 # Speicher-Sharding (für 50-100TB)
 STORAGE_SHARDS=10
@@ -151,7 +149,7 @@ Vorkonfigurierte Abteilungen:
 - Management (Geschäftsführung)
 - Human Resource (Personalwesen)
 
-## 📊 Monitoring
+## Monitoring
 
 ### Grafana Dashboards
 Zugriff über http://localhost:3001 (admin/admin)
@@ -172,25 +170,25 @@ Wichtige Metriken:
 - `llm_inference_time` - KI-Antwortzeit
 - `search_latency` - Suchlatenz
 
-## 🔐 Sicherheit
+## Sicherheit
 
 ### Implementierte Sicherheitsmaßnahmen
 
-- **JWT-basierte Authentifizierung** mit Refresh Tokens
-- **Abteilungsbasierte Zugriffskontrolle** (RBAC)
-- **Audit-Logging** aller kritischen Operationen
-- **Rate Limiting** für API-Endpunkte
-- **Input-Validierung** und Sanitization
-- **Verschlüsselte Kommunikation** (TLS ready)
-- **Sichere Passwort-Policies** (min. 8 Zeichen, Komplexität)
+- JWT-basierte Authentifizierung mit Refresh Tokens
+- Abteilungsbasierte Zugriffskontrolle (RBAC)
+- Audit-Logging aller kritischen Operationen
+- Rate Limiting für API-Endpunkte
+- Input-Validierung und Sanitization
+- Verschlüsselte Kommunikation (TLS ready)
+- Sichere Passwort-Policies (min. 8 Zeichen, Komplexität)
 
 ### Benutzerrollen
 
-1. **Superuser**: Vollzugriff auf alle Funktionen
-2. **Abteilungsleiter**: Verwaltung der Abteilungsdokumente
-3. **Mitarbeiter**: Zugriff auf persönliche und freigegebene Dokumente
+1. Superuser: Vollzugriff auf alle Funktionen
+2. Abteilungsleiter: Verwaltung der Abteilungsdokumente
+3. Mitarbeiter: Zugriff auf persönliche und freigegebene Dokumente
 
-## 🛠️ Wartung
+## Wartung
 
 ### Backup
 ```bash
@@ -218,7 +216,7 @@ docker-compose logs -f backend
 docker-compose logs -f celery-worker
 ```
 
-## 📈 Performance-Optimierung
+## Performance-Optimierung
 
 ### GPU-Optimierung
 ```bash
@@ -238,32 +236,32 @@ celery-worker:
     replicas: 4
 ```
 
-## 🐛 Fehlerbehebung
+## Fehlerbehebung
 
 ### Häufige Probleme
 
-1. **LLM antwortet nicht**
+1. LLM antwortet nicht
    ```bash
    docker-compose restart ollama
    docker exec pyramid-ollama ollama list
    ```
 
-2. **Dokumente werden nicht verarbeitet**
+2. Dokumente werden nicht verarbeitet
    ```bash
    docker-compose logs celery-worker
    docker-compose restart celery-worker
    ```
 
-3. **Speicherprobleme**
+3. Speicherprobleme
    ```bash
    docker system prune -a
    ```
 
-## 📚 API-Dokumentation
+## API-Dokumentation
 
 Die vollständige API-Dokumentation ist verfügbar unter:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
 
 ### Wichtige Endpoints
 
@@ -275,7 +273,7 @@ POST   /api/v1/chat/message         # Chat-Nachricht senden
 POST   /api/v1/search               # Dokumentensuche
 ```
 
-## 🚀 Zukünftige Integrationen
+## Zukünftige Integrationen
 
 - [ ] Microsoft Teams SSO
 - [ ] SharePoint Connector
@@ -284,23 +282,23 @@ POST   /api/v1/search               # Dokumentensuche
 - [ ] OCR für gescannte Dokumente
 - [ ] Multi-Tenant-Unterstützung
 
-## 📄 Lizenz
+## Lizenz
 
 Proprietär - Pyramid Computer GmbH
 
-## 🤝 Support
+## Support
 
 Für Support und Fragen:
-- **E-Mail**: support@pyramid-computer.de
-- **Intern**: IT-Helpdesk #7777
+- E-Mail: support@pyramid-computer.de
+- Intern: IT-Helpdesk #7777
 
-## 🙏 Credits
+## Credits
 
 Entwickelt mit:
 - FastAPI, React, PostgreSQL
-- Ollama & Qwen 2.5
+- Ollama & Qwen3
 - Docker & Docker Compose
-- Und viel ☕
+- Und viel Kaffee
 
 ---
 

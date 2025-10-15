@@ -6,13 +6,13 @@ from pydantic import BaseModel, EmailStr
 from datetime import datetime
 import uuid
 
-from app.database import get_db
-from app.models import User, Document, ChatSession, AuditLog, SystemMetrics, Department
+from app.database import get_async_db
+from app.models import User, Document, ChatSession, Department
 from app.api.deps import get_current_superuser
 from app.services.llm_service import LLMService
 from app.auth import get_password_hash
 
-router = APIRouter(prefix="/admin", tags=["Administration"])
+router = APIRouter(prefix="/api/v1/admin", tags=["Administration"])
 
 
 class UserCreateRequest(BaseModel):
@@ -55,7 +55,7 @@ class SystemHealthResponse(BaseModel):
 
 @router.get("/health", response_model=SystemHealthResponse)
 async def get_system_health(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user = Depends(get_current_superuser)
 ):
     """Get comprehensive system health status."""
@@ -134,7 +134,7 @@ async def get_audit_logs(
     limit: int = 100,
     action: str = None,
     user_id: str = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user = Depends(get_current_superuser)
 ):
     """Get audit logs."""
@@ -169,7 +169,7 @@ async def get_audit_logs(
 @router.post("/users", response_model=UserResponse)
 async def create_user(
     request: UserCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user = Depends(get_current_superuser)
 ):
     """Create a new user (admin only)."""
@@ -224,7 +224,7 @@ async def create_user(
 async def list_users(
     skip: int = 0,
     limit: int = 100,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user = Depends(get_current_superuser)
 ):
     """List all users (admin only)."""
@@ -254,7 +254,7 @@ async def list_users(
 async def get_system_metrics(
     metric_type: str = None,
     hours: int = 24,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user = Depends(get_current_superuser)
 ):
     """Get system metrics."""
@@ -293,7 +293,7 @@ async def get_system_metrics(
 
 @router.post("/reindex-documents")
 async def reindex_documents(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user = Depends(get_current_superuser)
 ):
     """Trigger reindexing of all documents."""

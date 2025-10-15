@@ -1,28 +1,19 @@
 # Pyramid RAG System - Hauptdokumentation
-**Letzte Aktualisierung: 2025-09-26 09:15 UTC**
+**Letzte Aktualisierung: 2025-10-15 10:00 UTC**
 
 ## System Übersicht
 
 Pyramid RAG ist eine vollständig on-premise Retrieval-Augmented Generation (RAG) Platform für Pyramid Computer GmbH. Das System ermöglicht intelligente Dokumentensuche und KI-gestützte Antworten basierend auf Unternehmensdokumenten.
 
-## 🚀 RAG Pipeline Status: VOLLSTÄNDIG IMPLEMENTIERT
-
-### Neue Features (2025-09-26 09:15)
-- ✅ **Komplette RAG Pipeline** mit Embeddings und Vector Search
-- ✅ **Automatische Metadaten-Erkennung** (keine Nutzereingabe nötig)
-- ✅ **Search Toggle** (ehemals RAG Ein/Aus) - umbenannt
-- ✅ **Ingest Toggle** - Dokumente dauerhaft indexieren oder nur temporär
-- ✅ **Drag & Drop im Chat** - direkte Integration
-- ✅ **15 Minuten Timeout** für große Dateien
-- ✅ **Deutsche Sprache optimiert** mit T-Systems RoBERTa Model
+## RAG Pipeline Status: VOLLSTÄNDIG IMPLEMENTIERT
 
 ## Aktuelle Architektur
 
 ### Backend (Port 18000)
 - **Framework**: FastAPI (Python)
 - **Datenbank**: PostgreSQL mit pgvector Extension
-- **LLM**: Ollama mit qwen2.5:7b (lokal, GPU-beschleunigt)
-- **Embedding Model**: T-Systems-onsite/german-roberta-sentence-transformer-v2
+- **LLM**: Ollama mit Qwen3 32B (lokal, GPU-beschleunigt)
+- **Embedding Model**: paraphrase-multilingual-mpnet-base-v2
 - **Container**: Docker mit docker-compose
 
 ### Frontend (Port 3002)
@@ -33,7 +24,7 @@ Pyramid RAG ist eine vollständig on-premise Retrieval-Augmented Generation (RAG
   - Dark Mode
   - Session Management
   - Drag & Drop Upload
-  - Search/Ingest Toggles (NEU!)
+  - Search/Ingest Toggles
 
 ## RAG Pipeline Komponenten
 
@@ -41,18 +32,19 @@ Pyramid RAG ist eine vollständig on-premise Retrieval-Augmented Generation (RAG
 1. **Content Extraction**: PDF, DOCX, XLSX, TXT und mehr
 2. **Metadata Detection**: Automatische Titel, Department, Keywords
 3. **Chunking**: Intelligente Text-Segmentierung (512 tokens, 100 overlap)
-4. **Embeddings**: German RoBERTa (768 dimensions)
+4. **Embeddings**: paraphrase-multilingual-mpnet-base-v2 (768 dimensions)
 5. **Vector Storage**: PostgreSQL + pgvector mit HNSW Index
 
 ### API Endpoints
-- `POST /api/v2/chat/{session_id}/files` - Upload mit auto-metadata
-- `POST /api/v2/chat/{session_id}/search` - Vector search
-- `POST /api/v1/chat` - Chat mit RAG-Integration
+- `POST /api/v1/documents/upload` - Dokumente hochladen
+- `POST /api/v1/chat/sessions/{session_id}/messages` - Chat-Nachricht senden
+- `POST /api/v1/mcp/search` - Hybride Suche
+- `POST /api/v1/mcp/stream` - Streaming Chat
 
 ## Authentifizierung
-- **Admin Account**: admin@pyramid-computer.de / admin123
+- **Admin Account**: admin@pyramid-computer.de / PyramidAdmin2024!
 - **Token**: JWT mit 6 Monaten Gültigkeit
-- **Departments**: MANAGEMENT, IT, SUPPORT
+- **Departments**: MANAGEMENT, IT, SUPPORT, etc.
 
 ## Docker Container Status
 - `pyramid-backend`: FastAPI Server mit RAG Pipeline
@@ -60,6 +52,12 @@ Pyramid RAG ist eine vollständig on-premise Retrieval-Augmented Generation (RAG
 - `pyramid-postgres`: PostgreSQL + pgvector
 - `pyramid-redis`: Cache/Queue
 - `pyramid-ollama`: LLM Service
+- `pyramid-celery-worker`: Asynchrone Aufgabenverarbeitung
+- `pyramid-celery-beat`: Periodische Aufgaben
+- `pyramid-flower`: Celery Monitoring
+- `pyramid-nginx`: Reverse Proxy
+- `pyramid-prometheus`: Monitoring
+- `pyramid-grafana`: Visualisierung
 
 ## Verwendung
 
@@ -80,17 +78,29 @@ Pyramid RAG ist eine vollständig on-premise Retrieval-Augmented Generation (RAG
 - Chunk Processing: Parallel mit 4 Workers
 
 ## Installierte Python Packages
-- sentence-transformers==2.7.0
-- pypdf2==3.0.1
-- python-docx==1.1.0
-- openpyxl==3.1.2
-- langdetect==1.0.9
-- pgvector==0.2.3
+- fastapi
+- uvicorn
+- sqlalchemy
+- alembic
+- asyncpg
+- psycopg2-binary
+- pgvector
+- python-jose[cryptography]
+- passlib[bcrypt]
+- sentence-transformers
+- torch
+- transformers
+- langchain
+- celery
+- redis
+- flower
+- prometheus-client
+- prometheus-fastapi-instrumentator
 
 ## Nächste Schritte
-- Monitoring Dashboard
-- SharePoint Integration (geplant)
-- ERP System Integration (geplant)
+- Vollständige Migration zu MCP
+- SharePoint Integration
+- ERP System Integration
 
 ---
 *Diese Dokumentation wird automatisch aktualisiert bei System-Änderungen.*
